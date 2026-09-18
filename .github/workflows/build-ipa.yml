@@ -227,8 +227,8 @@ jobs:
             -include stdarg.h
             -include build/wineserver/unicode_fix.h
             -include build/wineserver/wineserver_ios_kill.h
-            -DBINDIR="/usr/local/bin"
-            -DDATADIR="/usr/local/share"
+            -DBINDIR=\\\"/usr/local/bin\\\"
+            -DDATADIR=\\\"/usr/local/share\\\"
             -D__WINESRC__
             -DWINE_IOS=1
             -Dmain=wineserver_main
