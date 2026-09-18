@@ -38,5 +38,5 @@ for library in gmp nettle hogweed gnutls; do
 done
 for library in wineserver ntdll_unix win32u_unix gmp nettle hogweed gnutls; do
     test -s "app/Madeira/lib$library.a"
-    xcrun lipo -verify_arch arm64 "app/Madeira/lib$library.a"
+    xcrun lipo "app/Madeira/lib$library.a" -verify_arch arm64
 done

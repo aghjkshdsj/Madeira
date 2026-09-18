@@ -10,7 +10,7 @@ test -d "$app"
 plutil -lint "$app/Info.plist"
 executable=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")
 test -s "$app/$executable"
-xcrun lipo -verify_arch arm64 "$app/$executable"
+xcrun lipo "$app/$executable" -verify_arch arm64
 xcrun vtool -show-build "$app/$executable" | grep -q 'platform IOS'
 if codesign --verify "$app" 2>/dev/null; then
     echo "Expected an unsigned app, but a signature was found" >&2

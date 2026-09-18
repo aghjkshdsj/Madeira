@@ -12,4 +12,4 @@ done
 bash build/dxmt-ios/build.sh
 xcrun --sdk iphoneos libtool -static -o app/Madeira/libdxmt_combined.a \
     build/dxmt-ios/obj/*.o toolchains/llvm-ios-build/lib/*.a
-xcrun lipo -verify_arch arm64 app/Madeira/libdxmt_combined.a
+xcrun lipo app/Madeira/libdxmt_combined.a -verify_arch arm64
