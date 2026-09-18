@@ -104,11 +104,11 @@ jobs:
             $signature = Get-AuthenticodeSignature -FilePath $source.FullName
 
             if ($signature.Status -ne "Valid") {
-              throw "Authenticode validation failed for $dllName: $($signature.Status)"
+              throw "Authenticode validation failed for ${dllName}: $($signature.Status)"
             }
 
             if ($signature.SignerCertificate.Subject -notmatch "Microsoft") {
-              throw "Unexpected signer for $dllName: $($signature.SignerCertificate.Subject)"
+              throw "Unexpected signer for ${dllName}: $($signature.SignerCertificate.Subject)"
             }
 
             Copy-Item -LiteralPath $source.FullName -Destination (Join-Path $runtimeDir $dllName) -Force
