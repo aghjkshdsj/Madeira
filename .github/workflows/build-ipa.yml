@@ -32,52 +32,21 @@ jobs:
 
           Write-Host "Microsoft VC++ Redistributable download verified."
 
-      - name: Install WiX 5
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          dotnet tool install --global wix --version 5.0.2
-          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
-          wix --version
-
-      - name: Extract x64 runtime packages
+      - name: Install and collect Microsoft Visual C++ runtime
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           $exe = Join-Path $env:RUNNER_TEMP "VC_redist.x64.exe"
-          $bundleDir = Join-Path $env:RUNNER_TEMP "wix-bundle"
-          $payloadDir = Join-Path $bundleDir "payloads"
-          $baDir = Join-Path $bundleDir "ba"
-          $msiExtractDir = Join-Path $env:RUNNER_TEMP "vc-msi-extracted"
+          $install = Start-Process -FilePath $exe -ArgumentList "/install","/quiet","/norestart" -Wait -PassThru
+
+          if ($install.ExitCode -ne 0 -and $install.ExitCode -ne 3010) {
+            throw "VC++ Redistributable installation failed with exit code $($install.ExitCode)."
+          }
+
           $runtimeDir = Join-Path $env:GITHUB_WORKSPACE "runtime\x86_64-vcruntime"
-
-          Remove-Item $bundleDir,$msiExtractDir,(Join-Path $env:GITHUB_WORKSPACE "runtime") -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $payloadDir,$baDir,$msiExtractDir,$runtimeDir | Out-Null
-
-          wix burn extract $exe -out $payloadDir -outba $baDir
-
-          $msis = @(
-            Get-ChildItem -Path $payloadDir,$baDir -Recurse -File -Filter "*.msi" |
-              Where-Object { $_.Name -match "amd64" }
-          )
-
-          if ($msis.Count -lt 2) {
-            Write-Host "Extracted MSI files:"
-            Get-ChildItem -Path $payloadDir,$baDir -Recurse -File | Select-Object FullName
-            throw "Expected both amd64 Visual C++ runtime MSIs, found $($msis.Count)."
-          }
-
-          foreach ($msi in $msis) {
-            $destination = Join-Path $msiExtractDir $msi.BaseName
-            New-Item -ItemType Directory -Force -Path $destination | Out-Null
-
-            Write-Host "Administrative extraction: $($msi.FullName)"
-            & msiexec.exe /a $msi.FullName /qn "TARGETDIR=$destination"
-            if ($LASTEXITCODE -ne 0) {
-              throw "msiexec administrative extraction failed for $($msi.Name) with exit code $LASTEXITCODE."
-            }
-          }
+          Remove-Item -Path $runtimeDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 
           $required = @(
             "concrt140.dll",
@@ -95,23 +64,23 @@ jobs:
           )
 
           foreach ($dllName in $required) {
-            $matches = @(Get-ChildItem -Path $msiExtractDir -Recurse -File -Filter $dllName)
-            if ($matches.Count -eq 0) {
-              throw "Required x64 VC++ DLL was not found: $dllName"
+            $source = Join-Path $env:WINDIR ("System32\" + $dllName)
+
+            if (-not (Test-Path -LiteralPath $source)) {
+              throw ("Required x64 VC++ DLL was not installed: " + $dllName)
             }
 
-            $source = $matches | Select-Object -First 1
-            $signature = Get-AuthenticodeSignature -FilePath $source.FullName
+            $signature = Get-AuthenticodeSignature -FilePath $source
 
             if ($signature.Status -ne "Valid") {
-              throw "Authenticode validation failed for ${dllName}: $($signature.Status)"
+              throw ("Authenticode validation failed for " + $dllName + ": " + $signature.Status)
             }
 
             if ($signature.SignerCertificate.Subject -notmatch "Microsoft") {
-              throw "Unexpected signer for ${dllName}: $($signature.SignerCertificate.Subject)"
+              throw ("Unexpected signer for " + $dllName + ": " + $signature.SignerCertificate.Subject)
             }
 
-            Copy-Item -LiteralPath $source.FullName -Destination (Join-Path $runtimeDir $dllName) -Force
+            Copy-Item -LiteralPath $source -Destination (Join-Path $runtimeDir $dllName) -Force
           }
 
           $copied = @(Get-ChildItem -Path $runtimeDir -File -Filter "*.dll")
