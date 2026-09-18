@@ -137,14 +137,17 @@ jobs:
 
           core = Path("FEX/FEXCore/Source/Interface/Core/Core.cpp")
           s = core.read_text()
-          reporter_start = "  /* iOS-Madeira ml316: ExitToX64's FFS-bypass counters"
+          reporter_start = "  /* iOS-Madeira ml316: report ExitToX64 FFS bypasses"
           reporter_end = "  /* iOS-Madeira: refuse to compile obviously-invalid guest RIPs."
           start = s.find(reporter_start)
-          if start != -1:
-              end = s.find(reporter_end, start)
-              if end == -1:
-                  raise SystemExit("FEX iOS diagnostic reporter end marker not found")
-              s = s[:start] + s[end:]
+          if start == -1:
+              raise SystemExit("FEX iOS diagnostic reporter start marker not found")
+          end = s.find(reporter_end, start)
+          if end == -1:
+              raise SystemExit("FEX iOS diagnostic reporter end marker not found")
+          s = s[:start] + s[end:]
+          if "const uint64_t FfsCount = IosFfsBypassLog[0]" in s or "const uint64_t CBCount = IosCbEntryLog[6]" in s:
+              raise SystemExit("FEX iOS diagnostic reporters remain after cleanup")
           core.write_text(s)
 
           arm = Path("FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp")
