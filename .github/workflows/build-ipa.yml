@@ -44,9 +44,15 @@ jobs:
             -o /tmp/VC_redist.x64.exe \
             https://aka.ms/vc14/vc_redist.x64.exe
           7zz x /tmp/VC_redist.x64.exe -o/tmp/vcredist >/dev/null
-          CAB=$(find /tmp/vcredist/.rsrc/1033/CABINET -type f -name '*.cab' | head -n 1)
-          test -n "$CAB"
-          7zz x "$CAB" -oapp/Madeira/x86_64-vcruntime >/dev/null
+          rm -rf /tmp/vcruntime-extracted
+          mkdir -p /tmp/vcruntime-extracted
+
+          CAB_COUNT=0
+          while IFS= read -r -d '' CAB; do
+            CAB_COUNT=$((CAB_COUNT + 1))
+            7zz x "$CAB" -o/tmp/vcruntime-extracted >/dev/null
+          done < <(find /tmp/vcredist -type f -iname '*.cab' -print0)
+          test "$CAB_COUNT" -gt 0
 
           required=(
             concrt140.dll
@@ -63,9 +69,18 @@ jobs:
             vcruntime140_threads.dll
           )
           for dll in "${required[@]}"; do
-            test -s "app/Madeira/x86_64-vcruntime/$dll"
+            found=""
+            while IFS= read -r -d '' candidate; do
+              if file "$candidate" | grep -q "x86-64"; then
+                found="$candidate"
+                break
+              fi
+            done < <(find /tmp/vcruntime-extracted -type f -iname "$dll" -print0)
+            test -n "$found"
+            cp "$found" "app/Madeira/x86_64-vcruntime/$dll"
+            file "app/Madeira/x86_64-vcruntime/$dll" | grep -q "x86-64"
           done
-          echo "VC++ runtime files ready: ${#required[@]} DLLs"
+          echo "VC++ runtime files ready: ${#required[@]} x86-64 DLLs"
 
       - name: Inspect project
         run: |
