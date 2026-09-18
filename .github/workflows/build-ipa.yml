@@ -18,28 +18,21 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
           $url = "https://aka.ms/vc14/vc_redist.x64.exe"
           $exe = Join-Path $env:RUNNER_TEMP "VC_redist.x64.exe"
           $expectedSha256 = "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c"
-
           Invoke-WebRequest -Uri $url -OutFile $exe
-
           $actualSha256 = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actualSha256 -ne $expectedSha256) {
-            throw "Microsoft VC++ Redistributable SHA-256 mismatch. Expected $expectedSha256, got $actualSha256."
+            throw "Microsoft VC++ Redistributable SHA-256 mismatch."
           }
-
-          Write-Host "Microsoft VC++ Redistributable download verified."
 
       - name: Install and collect Microsoft Visual C++ runtime
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
           $exe = Join-Path $env:RUNNER_TEMP "VC_redist.x64.exe"
           $install = Start-Process -FilePath $exe -ArgumentList "/install","/quiet","/norestart" -Wait -PassThru
-
           if ($install.ExitCode -ne 0 -and $install.ExitCode -ne 3010) {
             throw "VC++ Redistributable installation failed with exit code $($install.ExitCode)."
           }
@@ -65,31 +58,15 @@ jobs:
 
           foreach ($dllName in $required) {
             $source = Join-Path $env:WINDIR ("System32\" + $dllName)
-
             if (-not (Test-Path -LiteralPath $source)) {
               throw ("Required x64 VC++ DLL was not installed: " + $dllName)
             }
-
             $signature = Get-AuthenticodeSignature -FilePath $source
-
-            if ($signature.Status -ne "Valid") {
-              throw ("Authenticode validation failed for " + $dllName + ": " + $signature.Status)
+            if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch "Microsoft") {
+              throw ("Authenticode validation failed for " + $dllName)
             }
-
-            if ($signature.SignerCertificate.Subject -notmatch "Microsoft") {
-              throw ("Unexpected signer for " + $dllName + ": " + $signature.SignerCertificate.Subject)
-            }
-
             Copy-Item -LiteralPath $source -Destination (Join-Path $runtimeDir $dllName) -Force
           }
-
-          $copied = @(Get-ChildItem -Path $runtimeDir -File -Filter "*.dll")
-          if ($copied.Count -ne $required.Count) {
-            throw "Expected $($required.Count) DLLs, copied $($copied.Count)."
-          }
-
-          Write-Host "Verified Microsoft-signed x64 VC++ runtime DLLs:"
-          $copied | Sort-Object Name | Select-Object Name,Length
 
       - name: Upload VC++ runtime artifact
         uses: actions/upload-artifact@v4
@@ -119,7 +96,6 @@ jobs:
           set -euo pipefail
           rm -rf app/Madeira/x86_64-vcruntime
           mkdir -p app/Madeira/x86_64-vcruntime
-
           required=(
             concrt140.dll
             msvcp140.dll
@@ -134,7 +110,6 @@ jobs:
             vcruntime140_1.dll
             vcruntime140_threads.dll
           )
-
           for dll in "${required[@]}"; do
             source=$(find /tmp/vc-runtime-artifact -type f -iname "$dll" -print -quit)
             test -n "$source"
@@ -142,14 +117,9 @@ jobs:
             file "app/Madeira/x86_64-vcruntime/$dll" | grep -q "x86-64"
           done
 
-          echo "Installed verified VC++ runtime:"
-          ls -lh app/Madeira/x86_64-vcruntime
-
       - name: Select available Xcode
         run: |
-          set -e
-          echo "Installed Xcode versions:"
-          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          set -euo pipefail
           if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
             sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
           else
@@ -159,83 +129,25 @@ jobs:
           fi
           xcodebuild -version
 
-      - name: Build FEX for iOS
+      - name: Prepare FEX iOS sources
         run: |
           set -euo pipefail
-
-          core_source="FEX/FEXCore/Source/Interface/Core/Core.cpp"
-          if ! grep -Fq 'static uint64_t IosFfsBypassLog[4]' "$core_source"; then
-            awk '
-              /^#include <cstdint>$/ && !inserted {
-                print
-                print ""
-                print "static uint64_t IosFfsBypassLog[4] = {};"
-                print "static uint64_t IosCbEntryLog[8] = {};"
-                inserted = 1
-                next
-              }
-              { print }
-              END {
-                if (!inserted) exit 1
-              }
-            ' "$core_source" > "$core_source.tmp"
-            mv "$core_source.tmp" "$core_source"
-          fi
-          grep -Fq 'static uint64_t IosFfsBypassLog[4]' "$core_source"
-          grep -Fq 'static uint64_t IosCbEntryLog[8]' "$core_source"
-
-          cmake -S FEX -B FEX/build-ios -G Ninja             -DCMAKE_SYSTEM_NAME=iOS -DTUNE_CPU=generic -DCMAKE_SYSTEM_PROCESSOR=arm64             -DCMAKE_OSX_ARCHITECTURES=arm64             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0             -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)"             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTING=OFF             -DBUILD_FEX_LINUX_TESTS=OFF             -DBUILD_THUNKS=OFF             -DBUILD_FEXCONFIG=OFF             -DBUILD_STEAM_SUPPORT=OFF             -DENABLE_ZYDIS=OFF             -DENABLE_LTO=OFF             -DENABLE_CCACHE=OFF             -DENABLE_FEX_ALLOCATOR=OFF             -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
-
-          cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs --parallel 3
-
-          test -s FEX/build-ios/FEXCore/Source/libFEXCore.a
-          test -s FEX/build-ios/FEXCore/Source/libFEXCore_Base.a
-          test -s FEX/build-ios/FEXCore/Source/libJemallocLibs.a
-          test -s FEX/build-ios/include/FEXCore/Config/ConfigValues.inl
-          echo "FEX iOS libraries and generated headers are ready."
-
-      - name: Inspect project
-        run: |
-          xcodebuild -list -project app/Madeira.xcodeproj
-
-      - name: Build unsigned IPA
-        run: |
-          set -e
-          rm -rf build/DerivedData build/IPA
-          mkdir -p build/IPA
-          xcodebuild             -project app/Madeira.xcodeproj             -scheme Madeira             -configuration Release             -sdk iphoneos             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             clean build
-
-          APP_PATH=$(find build/DerivedData/Build/Products -type d -name "Madeira.app" -path "*/Release-iphoneos/*" | head -n 1)
-          test -n "$APP_PATH"
-
-          mkdir -p build/IPA/Payload
-          cp -R "$APP_PATH" build/IPA/Payload/Madeira.app
-          cd build/IPA
-          zip -qry Madeira.ipa Payload
-
-      - name: Create release and upload IPA
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: Madeira IPA build ${{ github.run_number }}
-          generate_release_notes: true
-          files: build/IPA/Madeira.ipa          python3 - <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("FEX/FEXCore/Source/Interface/Core/Core.cpp")
-          s = p.read_text()
+          core = Path("FEX/FEXCore/Source/Interface/Core/Core.cpp")
+          s = core.read_text()
           marker = "    static uint64_t FfsLastCount = 0;"
           defs = """    static uint64_t IosFfsBypassLog[4] = {};
           static uint64_t IosCbEntryLog[8] = {};
           """
           if "static uint64_t IosFfsBypassLog[4]" not in s:
               if marker not in s:
-                  raise SystemExit("FEX Core.cpp marker not found")
-              s = s.replace(marker, defs + marker, 1)
-              p.write_text(s)
+                  raise SystemExit("FEX Core.cpp diagnostic marker not found")
+              core.write_text(s.replace(marker, defs + marker, 1))
 
-          p = Path("FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp")
-          s = p.read_text()
+          arm = Path("FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp")
+          s = arm.read_text()
           old = """  MEMORY_BASIC_INFORMATION mbi {};
           const char* type = "?";
           if (VirtualQuery(reinterpret_cast<LPCVOID>(GPRs[AddressReg]), &mbi, sizeof(mbi))) {
@@ -248,21 +160,38 @@ jobs:
                             mbi.Protect, type, mbi.State);"""
           new = """  LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={} ",
                             Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15);"""
-          if old not in s:
-              raise SystemExit("FEX Arm64 CASPAL diagnostic block not found")
-          s = s.replace(old, new, 1)
-          p.write_text(s)
+          if old in s:
+              arm.write_text(s.replace(old, new, 1))
+          elif "MEMORY_BASIC_INFORMATION mbi" in s:
+              raise SystemExit("Unexpected Arm64 CASPAL diagnostic source format")
           PY
 
-          cmake -S FEX -B FEX/build-ios -G Ninja             -DCMAKE_SYSTEM_NAME=iOS -DTUNE_CPU=generic -DCMAKE_SYSTEM_PROCESSOR=arm64             -DCMAKE_OSX_ARCHITECTURES=arm64             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0             -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)"             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTING=OFF             -DBUILD_FEX_LINUX_TESTS=OFF             -DBUILD_THUNKS=OFF             -DBUILD_FEXCONFIG=OFF             -DBUILD_STEAM_SUPPORT=OFF             -DENABLE_ZYDIS=OFF             -DENABLE_LTO=OFF             -DENABLE_CCACHE=OFF             -DENABLE_FEX_ALLOCATOR=OFF             -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
-
+      - name: Build FEX for iOS
+        run: |
+          set -euo pipefail
+          cmake -S FEX -B FEX/build-ios -G Ninja \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_SYSTEM_PROCESSOR=arm64 \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DTUNE_CPU=generic \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_FEX_LINUX_TESTS=OFF \
+            -DBUILD_THUNKS=OFF \
+            -DBUILD_FEXCONFIG=OFF \
+            -DBUILD_STEAM_SUPPORT=OFF \
+            -DENABLE_ZYDIS=OFF \
+            -DENABLE_LTO=OFF \
+            -DENABLE_CCACHE=OFF \
+            -DENABLE_FEX_ALLOCATOR=OFF \
+            -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
           cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs --parallel 3
-
           test -s FEX/build-ios/FEXCore/Source/libFEXCore.a
           test -s FEX/build-ios/FEXCore/Source/libFEXCore_Base.a
           test -s FEX/build-ios/FEXCore/Source/libJemallocLibs.a
           test -s FEX/build-ios/include/FEXCore/Config/ConfigValues.inl
-          echo "FEX iOS libraries and generated headers are ready."
 
       - name: Inspect project
         run: |
@@ -270,18 +199,26 @@ jobs:
 
       - name: Build unsigned IPA
         run: |
-          set -e
+          set -euo pipefail
           rm -rf build/DerivedData build/IPA
           mkdir -p build/IPA
-          xcodebuild             -project app/Madeira.xcodeproj             -scheme Madeira             -configuration Release             -sdk iphoneos             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             clean build
-
+          xcodebuild \
+            -project app/Madeira.xcodeproj \
+            -scheme Madeira \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
           APP_PATH=$(find build/DerivedData/Build/Products -type d -name "Madeira.app" -path "*/Release-iphoneos/*" | head -n 1)
           test -n "$APP_PATH"
-
           mkdir -p build/IPA/Payload
           cp -R "$APP_PATH" build/IPA/Payload/Madeira.app
           cd build/IPA
           zip -qry Madeira.ipa Payload
+          test -s Madeira.ipa
 
       - name: Create release and upload IPA
         uses: softprops/action-gh-release@v2
