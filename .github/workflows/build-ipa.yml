@@ -34,6 +34,39 @@ jobs:
           fi
           xcodebuild -version
 
+      - name: Fetch Microsoft Visual C++ runtime
+        run: |
+          set -euo pipefail
+          command -v 7zz >/dev/null 2>&1 || brew install sevenzip
+          rm -rf /tmp/vcredist app/Madeira/x86_64-vcruntime
+          mkdir -p /tmp/vcredist app/Madeira/x86_64-vcruntime
+          curl -L --fail --retry 5 --retry-delay 2 \
+            -o /tmp/VC_redist.x64.exe \
+            https://aka.ms/vc14/vc_redist.x64.exe
+          7zz x /tmp/VC_redist.x64.exe -o/tmp/vcredist >/dev/null
+          CAB=$(find /tmp/vcredist/.rsrc/1033/CABINET -type f -name '*.cab' | head -n 1)
+          test -n "$CAB"
+          7zz x "$CAB" -oapp/Madeira/x86_64-vcruntime >/dev/null
+
+          required=(
+            concrt140.dll
+            msvcp140.dll
+            msvcp140_1.dll
+            msvcp140_2.dll
+            msvcp140_atomic_wait.dll
+            msvcp140_codecvt_ids.dll
+            vcamp140.dll
+            vccorlib140.dll
+            vcomp140.dll
+            vcruntime140.dll
+            vcruntime140_1.dll
+            vcruntime140_threads.dll
+          )
+          for dll in "${required[@]}"; do
+            test -s "app/Madeira/x86_64-vcruntime/$dll"
+          done
+          echo "VC++ runtime files ready: ${#required[@]} DLLs"
+
       - name: Inspect project
         run: |
           xcodebuild -list -project app/Madeira.xcodeproj
