@@ -11,7 +11,126 @@ permissions:
   contents: write
 
 jobs:
+  prepare-vc-runtime:
+    runs-on: windows-latest
+    steps:
+      - name: Download Microsoft Visual C++ Redistributable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $url = "https://aka.ms/vc14/vc_redist.x64.exe"
+          $exe = Join-Path $env:RUNNER_TEMP "VC_redist.x64.exe"
+          $expectedSha256 = "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c"
+
+          Invoke-WebRequest -Uri $url -OutFile $exe
+
+          $actualSha256 = (Get-FileHash -Path $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "Microsoft VC++ Redistributable SHA-256 mismatch. Expected $expectedSha256, got $actualSha256."
+          }
+
+          Write-Host "Microsoft VC++ Redistributable download verified."
+
+      - name: Install WiX 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          dotnet tool install --global wix --version 5.0.2
+          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+          wix --version
+
+      - name: Extract x64 runtime packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $exe = Join-Path $env:RUNNER_TEMP "VC_redist.x64.exe"
+          $bundleDir = Join-Path $env:RUNNER_TEMP "wix-bundle"
+          $payloadDir = Join-Path $bundleDir "payloads"
+          $baDir = Join-Path $bundleDir "ba"
+          $msiExtractDir = Join-Path $env:RUNNER_TEMP "vc-msi-extracted"
+          $runtimeDir = Join-Path $env:GITHUB_WORKSPACE "runtime\x86_64-vcruntime"
+
+          Remove-Item $bundleDir,$msiExtractDir,(Join-Path $env:GITHUB_WORKSPACE "runtime") -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $payloadDir,$baDir,$msiExtractDir,$runtimeDir | Out-Null
+
+          wix burn extract $exe -out $payloadDir -outba $baDir
+
+          $msis = @(
+            Get-ChildItem -Path $payloadDir,$baDir -Recurse -File -Filter "*.msi" |
+              Where-Object { $_.Name -match "amd64" }
+          )
+
+          if ($msis.Count -lt 2) {
+            Write-Host "Extracted MSI files:"
+            Get-ChildItem -Path $payloadDir,$baDir -Recurse -File | Select-Object FullName
+            throw "Expected both amd64 Visual C++ runtime MSIs, found $($msis.Count)."
+          }
+
+          foreach ($msi in $msis) {
+            $destination = Join-Path $msiExtractDir $msi.BaseName
+            New-Item -ItemType Directory -Force -Path $destination | Out-Null
+
+            Write-Host "Administrative extraction: $($msi.FullName)"
+            & msiexec.exe /a $msi.FullName /qn "TARGETDIR=$destination"
+            if ($LASTEXITCODE -ne 0) {
+              throw "msiexec administrative extraction failed for $($msi.Name) with exit code $LASTEXITCODE."
+            }
+          }
+
+          $required = @(
+            "concrt140.dll",
+            "msvcp140.dll",
+            "msvcp140_1.dll",
+            "msvcp140_2.dll",
+            "msvcp140_atomic_wait.dll",
+            "msvcp140_codecvt_ids.dll",
+            "vcamp140.dll",
+            "vccorlib140.dll",
+            "vcomp140.dll",
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+            "vcruntime140_threads.dll"
+          )
+
+          foreach ($dllName in $required) {
+            $matches = @(Get-ChildItem -Path $msiExtractDir -Recurse -File -Filter $dllName)
+            if ($matches.Count -eq 0) {
+              throw "Required x64 VC++ DLL was not found: $dllName"
+            }
+
+            $source = $matches | Select-Object -First 1
+            $signature = Get-AuthenticodeSignature -FilePath $source.FullName
+
+            if ($signature.Status -ne "Valid") {
+              throw "Authenticode validation failed for $dllName: $($signature.Status)"
+            }
+
+            if ($signature.SignerCertificate.Subject -notmatch "Microsoft") {
+              throw "Unexpected signer for $dllName: $($signature.SignerCertificate.Subject)"
+            }
+
+            Copy-Item -LiteralPath $source.FullName -Destination (Join-Path $runtimeDir $dllName) -Force
+          }
+
+          $copied = @(Get-ChildItem -Path $runtimeDir -File -Filter "*.dll")
+          if ($copied.Count -ne $required.Count) {
+            throw "Expected $($required.Count) DLLs, copied $($copied.Count)."
+          }
+
+          Write-Host "Verified Microsoft-signed x64 VC++ runtime DLLs:"
+          $copied | Sort-Object Name | Select-Object Name,Length
+
+      - name: Upload VC++ runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vc-runtime-x64
+          path: runtime/x86_64-vcruntime
+          if-no-files-found: error
+
   build:
+    needs: prepare-vc-runtime
     runs-on: macos-14
     steps:
       - name: Checkout
@@ -20,54 +139,17 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Select available Xcode
-        run: |
-          set -e
-          echo "Installed Xcode versions:"
-          ls -d /Applications/Xcode*.app 2>/dev/null || true
-          if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
-            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          else
-            XCODE_PATH=$(find /Applications -maxdepth 1 -name 'Xcode*.app' -type d | sort -V | tail -n 1)
-            test -n "$XCODE_PATH"
-            sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
-          fi
-          xcodebuild -version
-
-      - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+      - name: Download verified VC++ runtime
+        uses: actions/download-artifact@v4
         with:
-          dotnet-version: 8.0.x
+          name: vc-runtime-x64
+          path: /tmp/vc-runtime-artifact
 
-      - name: Fetch Microsoft Visual C++ runtime
+      - name: Install VC++ runtime into app
         run: |
           set -euo pipefail
-          export PATH="$HOME/.dotnet/tools:$PATH"
-
-          brew install msitools
-
-          dotnet tool install --global wix --version 5.0.2
-          wix --version
-
-          rm -rf /tmp/vcredist /tmp/vcredist-wix /tmp/vcredist-wix-ba /tmp/vcruntime-extracted
           rm -rf app/Madeira/x86_64-vcruntime
-          mkdir -p /tmp/vcredist-wix /tmp/vcredist-wix-ba /tmp/vcruntime-extracted
           mkdir -p app/Madeira/x86_64-vcruntime
-
-          curl -L --fail --retry 5 --retry-delay 2             -o /tmp/VC_redist.x64.exe             https://aka.ms/vc14/vc_redist.x64.exe
-
-          echo "Validating Microsoft VC++ Redistributable download:"
-          echo "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c  /tmp/VC_redist.x64.exe" | shasum -a 256 -c -
-
-          wix burn extract             /tmp/VC_redist.x64.exe             -out /tmp/vcredist-wix             -outba /tmp/vcredist-wix-ba
-
-          MSI_COUNT=0
-          while IFS= read -r -d '' msi; do
-            MSI_COUNT=$((MSI_COUNT + 1))
-            echo "Extracting MSI: $msi"
-            msiextract -C /tmp/vcruntime-extracted "$msi"
-          done < <(find /tmp/vcredist-wix /tmp/vcredist-wix-ba -type f -iname '*.msi' -print0)
-          test "$MSI_COUNT" -gt 0
 
           required=(
             concrt140.dll
@@ -85,21 +167,28 @@ jobs:
           )
 
           for dll in "${required[@]}"; do
-            found=""
-            while IFS= read -r -d '' candidate; do
-              if file "$candidate" | grep -q "x86-64"; then
-                found="$candidate"
-                break
-              fi
-            done < <(find /tmp/vcruntime-extracted -type f -iname "$dll" -print0)
-
-            test -n "$found"
-            cp "$found" "app/Madeira/x86_64-vcruntime/$dll"
+            source=$(find /tmp/vc-runtime-artifact -type f -iname "$dll" -print -quit)
+            test -n "$source"
+            cp "$source" "app/Madeira/x86_64-vcruntime/$dll"
             file "app/Madeira/x86_64-vcruntime/$dll" | grep -q "x86-64"
           done
 
-          echo "VC++ runtime files ready: ${#required[@]} x86-64 DLLs"
+          echo "Installed verified VC++ runtime:"
           ls -lh app/Madeira/x86_64-vcruntime
+
+      - name: Select available Xcode
+        run: |
+          set -e
+          echo "Installed Xcode versions:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          else
+            XCODE_PATH=$(find /Applications -maxdepth 1 -name 'Xcode*.app' -type d | sort -V | tail -n 1)
+            test -n "$XCODE_PATH"
+            sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          fi
+          xcodebuild -version
 
       - name: Inspect project
         run: |
@@ -110,18 +199,11 @@ jobs:
           set -e
           rm -rf build/DerivedData build/IPA
           mkdir -p build/IPA
-          xcodebuild \
-            -project app/Madeira.xcodeproj \
-            -scheme Madeira \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            clean build
+          xcodebuild             -project app/Madeira.xcodeproj             -scheme Madeira             -configuration Release             -sdk iphoneos             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             clean build
+
           APP_PATH=$(find build/DerivedData/Build/Products -type d -name "Madeira.app" -path "*/Release-iphoneos/*" | head -n 1)
           test -n "$APP_PATH"
+
           mkdir -p build/IPA/Payload
           cp -R "$APP_PATH" build/IPA/Payload/Madeira.app
           cd build/IPA
