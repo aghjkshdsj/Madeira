@@ -219,4 +219,54 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: Madeira IPA build ${{ github.run_number }}
           generate_release_notes: true
+          files: build/IPA/Madeira.ipa          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("FEX/FEXCore/Source/Interface/Core/Core.cpp")
+          s = p.read_text()
+          marker = "    static uint64_t FfsLastCount = 0;"
+          defs = """    static uint64_t IosFfsBypassLog[4] = {};
+          static uint64_t IosCbEntryLog[8] = {};
+          """
+          if "static uint64_t IosFfsBypassLog[4]" not in s:
+              if marker not in s:
+                  raise SystemExit("FEX Core.cpp marker not found")
+              s = s.replace(marker, defs + marker, 1)
+              p.write_text(s)
+          PY
+
+          cmake -S FEX -B FEX/build-ios -G Ninja             -DCMAKE_SYSTEM_NAME=iOS -DTUNE_CPU=generic -DCMAKE_SYSTEM_PROCESSOR=arm64             -DCMAKE_OSX_ARCHITECTURES=arm64             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0             -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)"             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTING=OFF             -DBUILD_FEX_LINUX_TESTS=OFF             -DBUILD_THUNKS=OFF             -DBUILD_FEXCONFIG=OFF             -DBUILD_STEAM_SUPPORT=OFF             -DENABLE_ZYDIS=OFF             -DENABLE_LTO=OFF             -DENABLE_CCACHE=OFF             -DENABLE_FEX_ALLOCATOR=OFF             -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
+
+          cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs --parallel 3
+
+          test -s FEX/build-ios/FEXCore/Source/libFEXCore.a
+          test -s FEX/build-ios/FEXCore/Source/libFEXCore_Base.a
+          test -s FEX/build-ios/FEXCore/Source/libJemallocLibs.a
+          test -s FEX/build-ios/include/FEXCore/Config/ConfigValues.inl
+          echo "FEX iOS libraries and generated headers are ready."
+
+      - name: Inspect project
+        run: |
+          xcodebuild -list -project app/Madeira.xcodeproj
+
+      - name: Build unsigned IPA
+        run: |
+          set -e
+          rm -rf build/DerivedData build/IPA
+          mkdir -p build/IPA
+          xcodebuild             -project app/Madeira.xcodeproj             -scheme Madeira             -configuration Release             -sdk iphoneos             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             clean build
+
+          APP_PATH=$(find build/DerivedData/Build/Products -type d -name "Madeira.app" -path "*/Release-iphoneos/*" | head -n 1)
+          test -n "$APP_PATH"
+
+          mkdir -p build/IPA/Payload
+          cp -R "$APP_PATH" build/IPA/Payload/Madeira.app
+          cd build/IPA
+          zip -qry Madeira.ipa Payload
+
+      - name: Create release and upload IPA
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Madeira IPA build ${{ github.run_number }}
+          generate_release_notes: true
           files: build/IPA/Madeira.ipa
