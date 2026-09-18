@@ -20,9 +20,18 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Select Xcode
+      - name: Select available Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          set -e
+          echo "Installed Xcode versions:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          else
+            XCODE_PATH=$(find /Applications -maxdepth 1 -name 'Xcode*.app' -type d | sort -V | tail -n 1)
+            test -n "$XCODE_PATH"
+            sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
+          fi
           xcodebuild -version
 
       - name: Inspect project
@@ -34,7 +43,16 @@ jobs:
           set -e
           rm -rf build/DerivedData build/IPA
           mkdir -p build/IPA
-          xcodebuild             -project app/Madeira.xcodeproj             -scheme Madeira             -configuration Release             -sdk iphoneos             -derivedDataPath build/DerivedData             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             clean build
+          xcodebuild \
+            -project app/Madeira.xcodeproj \
+            -scheme Madeira \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
           APP_PATH=$(find build/DerivedData/Build/Products -type d -name "Madeira.app" -path "*/Release-iphoneos/*" | head -n 1)
           test -n "$APP_PATH"
           mkdir -p build/IPA/Payload
