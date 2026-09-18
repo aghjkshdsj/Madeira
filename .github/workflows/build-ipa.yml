@@ -56,13 +56,13 @@ jobs:
 
           wix burn extract             /tmp/VC_redist.x64.exe             -out /tmp/vcredist-wix             -outba /tmp/vcredist-wix-ba
 
-          mapfile -t MSIS < <(find /tmp/vcredist-wix /tmp/vcredist-wix-ba -type f -iname '*.msi' -print)
-          test "${#MSIS[@]}" -gt 0
-
-          for msi in "${MSIS[@]}"; do
+          MSI_COUNT=0
+          while IFS= read -r -d '' msi; do
+            MSI_COUNT=$((MSI_COUNT + 1))
             echo "Extracting MSI: $msi"
             msiextract -C /tmp/vcruntime-extracted "$msi"
-          done
+          done < <(find /tmp/vcredist-wix /tmp/vcredist-wix-ba -type f -iname '*.msi' -print0)
+          test "$MSI_COUNT" -gt 0
 
           required=(
             concrt140.dll
