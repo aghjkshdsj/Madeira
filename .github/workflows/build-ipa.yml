@@ -37,22 +37,32 @@ jobs:
       - name: Fetch Microsoft Visual C++ runtime
         run: |
           set -euo pipefail
-          command -v 7zz >/dev/null 2>&1 || brew install sevenzip
-          rm -rf /tmp/vcredist app/Madeira/x86_64-vcruntime
-          mkdir -p /tmp/vcredist app/Madeira/x86_64-vcruntime
-          curl -L --fail --retry 5 --retry-delay 2 \
-            -o /tmp/VC_redist.x64.exe \
-            https://aka.ms/vc14/vc_redist.x64.exe
-          7zz x /tmp/VC_redist.x64.exe -o/tmp/vcredist >/dev/null
-          rm -rf /tmp/vcruntime-extracted
-          mkdir -p /tmp/vcruntime-extracted
+          export PATH="$HOME/.dotnet/tools:$PATH"
 
-          CAB_COUNT=0
-          while IFS= read -r -d '' CAB; do
-            CAB_COUNT=$((CAB_COUNT + 1))
-            7zz x "$CAB" -o/tmp/vcruntime-extracted >/dev/null
-          done < <(find /tmp/vcredist -type f -iname '*.cab' -print0)
-          test "$CAB_COUNT" -gt 0
+          brew install msitools
+
+          dotnet tool install --global wix --version 7.0.0
+          wix --version
+
+          rm -rf /tmp/vcredist /tmp/vcredist-wix /tmp/vcredist-wix-ba /tmp/vcruntime-extracted
+          rm -rf app/Madeira/x86_64-vcruntime
+          mkdir -p /tmp/vcredist-wix /tmp/vcredist-wix-ba /tmp/vcruntime-extracted
+          mkdir -p app/Madeira/x86_64-vcruntime
+
+          curl -L --fail --retry 5 --retry-delay 2             -o /tmp/VC_redist.x64.exe             https://aka.ms/vc14/vc_redist.x64.exe
+
+          echo "Validating Microsoft VC++ Redistributable download:"
+          echo "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c  /tmp/VC_redist.x64.exe" | shasum -a 256 -c -
+
+          wix burn extract             /tmp/VC_redist.x64.exe             -out /tmp/vcredist-wix             -outba /tmp/vcredist-wix-ba
+
+          mapfile -t MSIS < <(find /tmp/vcredist-wix /tmp/vcredist-wix-ba -type f -iname '*.msi' -print)
+          test "${#MSIS[@]}" -gt 0
+
+          for msi in "${MSIS[@]}"; do
+            echo "Extracting MSI: $msi"
+            msiextract -C /tmp/vcruntime-extracted "$msi"
+          done
 
           required=(
             concrt140.dll
@@ -68,6 +78,7 @@ jobs:
             vcruntime140_1.dll
             vcruntime140_threads.dll
           )
+
           for dll in "${required[@]}"; do
             found=""
             while IFS= read -r -d '' candidate; do
@@ -76,11 +87,14 @@ jobs:
                 break
               fi
             done < <(find /tmp/vcruntime-extracted -type f -iname "$dll" -print0)
+
             test -n "$found"
             cp "$found" "app/Madeira/x86_64-vcruntime/$dll"
             file "app/Madeira/x86_64-vcruntime/$dll" | grep -q "x86-64"
           done
+
           echo "VC++ runtime files ready: ${#required[@]} x86-64 DLLs"
+          ls -lh app/Madeira/x86_64-vcruntime
 
       - name: Inspect project
         run: |
