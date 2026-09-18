@@ -137,17 +137,14 @@ jobs:
 
           core = Path("FEX/FEXCore/Source/Interface/Core/Core.cpp")
           s = core.read_text()
-          symbols = {
-              'extern "C" uint64_t IosFfsBypassLog[4];':
-                  'extern "C" uint64_t IosFfsBypassLog[4] = {};',
-              'extern "C" uint64_t IosCbEntryLog[8];':
-                  'extern "C" uint64_t IosCbEntryLog[8] = {};',
-          }
-          for declaration, definition in symbols.items():
-              if definition not in s:
-                  if declaration not in s:
-                      raise SystemExit(f"FEX Core.cpp declaration not found: {declaration}")
-                  s = s.replace(declaration, definition, 1)
+          reporter_start = "  /* iOS-Madeira ml316: ExitToX64's FFS-bypass counters"
+          reporter_end = "  /* iOS-Madeira: refuse to compile obviously-invalid guest RIPs."
+          start = s.find(reporter_start)
+          if start != -1:
+              end = s.find(reporter_end, start)
+              if end == -1:
+                  raise SystemExit("FEX iOS diagnostic reporter end marker not found")
+              s = s[:start] + s[end:]
           core.write_text(s)
 
           arm = Path("FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp")
