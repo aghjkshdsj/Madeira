@@ -148,22 +148,15 @@ jobs:
 
           arm = Path("FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp")
           s = arm.read_text()
-          old = """  MEMORY_BASIC_INFORMATION mbi {};
-          const char* type = "?";
-          if (VirtualQuery(reinterpret_cast<LPCVOID>(GPRs[AddressReg]), &mbi, sizeof(mbi))) {
-            type = mbi.Type == MEM_IMAGE ? "MEM_IMAGE" : mbi.Type == MEM_MAPPED ? "MEM_MAPPED" : "MEM_PRIVATE";
-          }
-          LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={} "
-                            "crosses16B={} | region base={} size={:#x} prot={:#x} type={} state={:#x}",
-                            Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15,
-                            (GPRs[AddressReg] & 15) ? "yes" : "no", mbi.BaseAddress, mbi.RegionSize,
-                            mbi.Protect, type, mbi.State);"""
-          new = """  LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={} ",
+          start = s.find("  MEMORY_BASIC_INFORMATION mbi {};")
+          if start != -1:
+              end_marker = "mbi.Protect, type, mbi.State);"
+              end = s.find(end_marker, start)
+              if end == -1:
+                  raise SystemExit("Arm64 CASPAL diagnostic end marker not found")
+              new = """  LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={} ",
                             Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15);"""
-          if old in s:
-              arm.write_text(s.replace(old, new, 1))
-          elif "MEMORY_BASIC_INFORMATION mbi" in s:
-              raise SystemExit("Unexpected Arm64 CASPAL diagnostic source format")
+              arm.write_text(s[:start] + new + s[end + len(end_marker):])
           PY
 
       - name: Build FEX for iOS
