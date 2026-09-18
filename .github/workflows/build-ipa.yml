@@ -159,6 +159,19 @@ jobs:
           fi
           xcodebuild -version
 
+      - name: Build FEX for iOS
+        run: |
+          set -euo pipefail
+          cmake -S FEX -B FEX/build-ios -G Ninja             -DCMAKE_SYSTEM_NAME=iOS             -DCMAKE_OSX_ARCHITECTURES=arm64             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0             -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)"             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTING=OFF             -DBUILD_FEX_LINUX_TESTS=OFF             -DBUILD_THUNKS=OFF             -DBUILD_FEXCONFIG=OFF             -DBUILD_STEAM_SUPPORT=OFF             -DENABLE_ZYDIS=OFF             -DENABLE_LTO=OFF             -DENABLE_CCACHE=OFF             -DENABLE_FEX_ALLOCATOR=OFF             -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
+
+          cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs --parallel 3
+
+          test -s FEX/build-ios/FEXCore/Source/libFEXCore.a
+          test -s FEX/build-ios/FEXCore/Source/libFEXCore_Base.a
+          test -s FEX/build-ios/FEXCore/Source/libJemallocLibs.a
+          test -s FEX/build-ios/include/FEXCore/Config/ConfigValues.inl
+          echo "FEX iOS libraries and generated headers are ready."
+
       - name: Inspect project
         run: |
           xcodebuild -list -project app/Madeira.xcodeproj
