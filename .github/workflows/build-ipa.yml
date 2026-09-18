@@ -170,7 +170,7 @@ jobs:
           from pathlib import Path
           p = Path("FEX/FEXCore/Source/Interface/Core/Core.cpp")
           s = p.read_text()
-          if "IosFfsBypassLog[4]" not in s:
+          if "static uint64_t IosFfsBypassLog[4]" not in s:
               marker = "#include <cstdint>"
               defs = """#include <cstdint>
           
