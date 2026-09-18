@@ -3,12 +3,21 @@ name: Build Madeira IPA
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
+      - "build/**"
+      - "FEX"
+      - "wine"
+      - "research/dxmt"
       - "app/**"
       - ".github/workflows/build-ipa.yml"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ipa-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   prepare-vc-runtime:
@@ -75,221 +84,160 @@ jobs:
           path: runtime/x86_64-vcruntime
           if-no-files-found: error
 
-  build:
-    needs: prepare-vc-runtime
+  native:
     runs-on: macos-26
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [fex, wine, dxmt]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
+      - name: Record toolchain
+        id: sdk
+        run: |
+          xcodebuild -version
+          echo "version=$(xcrun --sdk iphoneos --show-sdk-version)" >> "$GITHUB_OUTPUT"
+      - name: Cache completed native component
+        id: native-cache
+        uses: actions/cache@v4
+        with:
+          path: build/ci-${{ matrix.component }}.tar
+          key: native-v1-${{ runner.arch }}-${{ steps.sdk.outputs.version }}-${{ matrix.component }}-${{ hashFiles('build/ci/**', 'build/wineserver/**', 'build/ntdll-unix/**', 'build/win32u-unix/**', 'build/dxmt-ios/**', 'build/gnutls-ios/**', 'build/freetype-ios/**', '.gitmodules') }}-053c385-7817e22-b4b89f0
+      - name: Restore crypto dependencies
+        if: matrix.component == 'wine' && steps.native-cache.outputs.cache-hit != 'true'
+        id: crypto-cache
+        uses: actions/cache@v4
+        with:
+          path: toolchains/gnutls-ios
+          key: crypto-v1-${{ runner.arch }}-${{ steps.sdk.outputs.version }}-${{ hashFiles('build/gnutls-ios/**') }}
+      - name: Build crypto dependencies
+        if: matrix.component == 'wine' && steps.native-cache.outputs.cache-hit != 'true' && steps.crypto-cache.outputs.cache-hit != 'true'
+        run: bash build/gnutls-ios/build.sh
+      - name: Save completed crypto dependencies
+        if: matrix.component == 'wine' && steps.native-cache.outputs.cache-hit != 'true' && steps.crypto-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: toolchains/gnutls-ios
+          key: ${{ steps.crypto-cache.outputs.cache-primary-key }}
+      - name: Restore LLVM iOS dependencies
+        if: matrix.component == 'dxmt' && steps.native-cache.outputs.cache-hit != 'true'
+        id: llvm-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            toolchains/llvm-project/llvm/include
+            toolchains/llvm-ios-build/include
+            toolchains/llvm-ios-build/lib
+          key: llvm15-v1-${{ runner.arch }}-${{ steps.sdk.outputs.version }}-${{ hashFiles('build/ci/build-llvm.sh') }}
+      - name: Build LLVM for iOS
+        if: matrix.component == 'dxmt' && steps.native-cache.outputs.cache-hit != 'true' && steps.llvm-cache.outputs.cache-hit != 'true'
+        run: bash build/ci/build-llvm.sh
+      - name: Save completed LLVM dependencies
+        if: matrix.component == 'dxmt' && steps.native-cache.outputs.cache-hit != 'true' && steps.llvm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            toolchains/llvm-project/llvm/include
+            toolchains/llvm-ios-build/include
+            toolchains/llvm-ios-build/lib
+          key: ${{ steps.llvm-cache.outputs.cache-primary-key }}
+      - name: Build native component
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          bash "build/ci/build-$COMPONENT.sh"
+          case "$COMPONENT" in
+            fex) tar -cf build/ci-fex.tar FEX/build-ios ;;
+            wine) tar -cf build/ci-wine.tar app/Madeira/libwineserver.a app/Madeira/libntdll_unix.a app/Madeira/libwin32u_unix.a app/Madeira/libgmp.a app/Madeira/libnettle.a app/Madeira/libhogweed.a app/Madeira/libgnutls.a ;;
+            dxmt) tar -cf build/ci-dxmt.tar app/Madeira/libdxmt_combined.a ;;
+          esac
+      - name: Upload native component
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.component }}
+          path: build/ci-${{ matrix.component }}.tar
+          if-no-files-found: error
+      - name: Preserve failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-${{ matrix.component }}
+          path: |
+            build/**/*.err
+            build/**/err-*.txt
+            build/**/*.log
+            wine/build-macos/config.log
+            toolchains/**/CMakeFiles/CMakeConfigureLog.yaml
+          if-no-files-found: ignore
 
-      - name: Download verified VC++ runtime
-        uses: actions/download-artifact@v4
+  release:
+    needs: [prepare-vc-runtime, native]
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: build/native-artifacts
+          merge-multiple: true
+      - name: Install native libraries
+        run: |
+          set -euo pipefail
+          for archive in build/native-artifacts/*.tar; do
+            tar -xf "$archive"
+          done
+      - uses: actions/download-artifact@v4
         with:
           name: vc-runtime-x64
-          path: /tmp/vc-runtime-artifact
-
-      - name: Install VC++ runtime into app
+          path: app/Madeira/x86_64-vcruntime
+      - name: Verify Microsoft runtime architecture
         run: |
           set -euo pipefail
-          rm -rf app/Madeira/x86_64-vcruntime
-          mkdir -p app/Madeira/x86_64-vcruntime
-          required=(
-            concrt140.dll
-            msvcp140.dll
-            msvcp140_1.dll
-            msvcp140_2.dll
-            msvcp140_atomic_wait.dll
-            msvcp140_codecvt_ids.dll
-            vcamp140.dll
-            vccorlib140.dll
-            vcomp140.dll
-            vcruntime140.dll
-            vcruntime140_1.dll
-            vcruntime140_threads.dll
-          )
-          for dll in "${required[@]}"; do
-            source=$(find /tmp/vc-runtime-artifact -type f -iname "$dll" -print -quit)
-            test -n "$source"
-            cp "$source" "app/Madeira/x86_64-vcruntime/$dll"
-            file "app/Madeira/x86_64-vcruntime/$dll" | grep -q "x86-64"
+          for dll in app/Madeira/x86_64-vcruntime/*.dll; do
+            file "$dll" | grep -q x86-64
           done
-
-      - name: Select available Xcode
-        run: |
-          set -euo pipefail
-          if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
-            sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-          else
-            XCODE_PATH=$(find /Applications -maxdepth 1 -name 'Xcode*.app' -type d | sort -V | tail -n 1)
-            test -n "$XCODE_PATH"
-            sudo xcode-select -s "$XCODE_PATH/Contents/Developer"
-          fi
-          xcodebuild -version
-
-      - name: Prepare FEX iOS sources
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          core = Path("FEX/FEXCore/Source/Interface/Core/Core.cpp")
-          s = core.read_text()
-          reporter_start = "  /* iOS-Madeira ml316: report ExitToX64 FFS bypasses"
-          reporter_end = "  /* iOS-Madeira: refuse to compile obviously-invalid guest RIPs."
-          start = s.find(reporter_start)
-          if start == -1:
-              raise SystemExit("FEX iOS diagnostic reporter start marker not found")
-          end = s.find(reporter_end, start)
-          if end == -1:
-              raise SystemExit("FEX iOS diagnostic reporter end marker not found")
-          s = s[:start] + s[end:]
-          if "const uint64_t FfsCount = IosFfsBypassLog[0]" in s or "const uint64_t CBCount = IosCbEntryLog[6]" in s:
-              raise SystemExit("FEX iOS diagnostic reporters remain after cleanup")
-          core.write_text(s)
-
-          arm = Path("FEX/FEXCore/Source/Utils/ArchHelpers/Arm64.cpp")
-          s = arm.read_text()
-          start = s.find("  MEMORY_BASIC_INFORMATION mbi {};")
-          if start != -1:
-              end_marker = "mbi.Protect, type, mbi.State);"
-              end = s.find(end_marker, start)
-              if end == -1:
-                  raise SystemExit("Arm64 CASPAL diagnostic end marker not found")
-              new = """  LogMan::Msg::EFmt("[caspal128] MISALIGNED-UNSUPPORTED Size={} addrReg=x{} addr={:#x} misalign={} ",
-                            Size, AddressReg, GPRs[AddressReg], GPRs[AddressReg] & 15);"""
-              arm.write_text(s[:start] + new + s[end + len(end_marker):])
-          PY
-
-      - name: Build FEX for iOS
-        run: |
-          set -euo pipefail
-          cmake -S FEX -B FEX/build-ios -G Ninja \
-            -DCMAKE_SYSTEM_NAME=iOS \
-            -DCMAKE_SYSTEM_PROCESSOR=arm64 \
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
-            -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DTUNE_CPU=generic \
-            -DBUILD_TESTING=OFF \
-            -DBUILD_FEX_LINUX_TESTS=OFF \
-            -DBUILD_THUNKS=OFF \
-            -DBUILD_FEXCONFIG=OFF \
-            -DBUILD_STEAM_SUPPORT=OFF \
-            -DENABLE_ZYDIS=OFF \
-            -DENABLE_LTO=OFF \
-            -DENABLE_CCACHE=OFF \
-            -DENABLE_FEX_ALLOCATOR=OFF \
-            -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
-          cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs --parallel 3
-          test -s FEX/build-ios/FEXCore/Source/libFEXCore.a
-          test -s FEX/build-ios/FEXCore/Source/libFEXCore_Base.a
-          test -s FEX/build-ios/FEXCore/Source/libJemallocLibs.a
-          test -s FEX/build-ios/include/FEXCore/Config/ConfigValues.inl
-
-      - name: Build Wine libraries for iOS
-        run: |
-          set -euo pipefail
-
-          brew list --versions bison >/dev/null 2>&1 || brew install bison
-          export PATH="$(brew --prefix bison)/bin:$PATH"
-
-          mkdir -p wine/build-macos
-          (
-            cd wine/build-macos
-            ../configure --disable-tests --disable-win16 --without-x
-            make -j3 tools/winebuild tools/widl tools/wmc tools/wrc
-          )
-
-          if [ ! -d research/freetype ]; then
-            git clone --depth 1 --branch VER-2-13-3 https://github.com/freetype/freetype.git research/freetype
-          fi
-          ./build/freetype-ios/build.sh
-          ./build/gnutls-ios/build.sh
-
-          sdk=$(xcrun --sdk iphoneos --show-sdk-path)
-          base_dir=build/wineserver/base
-          rm -rf "$base_dir"
-          mkdir -p "$base_dir"
-          common_flags=(
-            -arch arm64
-            -isysroot "$sdk"
-            -miphoneos-version-min=17.0
-            -O2
-            -Iwine/include
-            -Iwine/include/wine
-            -Iwine/build-macos/include
-            -Iwine/build-macos/server
-            -Ibuild/wineserver
-            -Iwine/server
-            -Ibuild/ntdll-unix/shims
-            -include build/wineserver/config_ios.h
-            -include stdarg.h
-            -include build/wineserver/unicode_fix.h
-            -include build/wineserver/wineserver_ios_kill.h
-            -DBINDIR=\\\"/usr/local/bin\\\"
-            -DDATADIR=\\\"/usr/local/share\\\"
-            -D__WINESRC__
-            -DWINE_IOS=1
-            -Dmain=wineserver_main
-            -Wno-implicit-function-declaration
-          )
-          for source in wine/server/*.c; do
-            object="$base_dir/$(basename "${source%.c}").o"
-            xcrun --sdk iphoneos clang "${common_flags[@]}" -c "$source" -o "$object"
-          done
-          xcrun --sdk iphoneos ar rcs app/Madeira/libwineserver.a "$base_dir"/*.o
-
-          ./build/wineserver/build.sh
-          ./build/ntdll-unix/build.sh
-          ./build/win32u-unix/build.sh
-
-          cp app/libdxmt_unix.a app/Madeira/libdxmt_combined.a
-          required=(
-            app/Madeira/libwineserver.a
-            app/Madeira/libntdll_unix.a
-            app/Madeira/libwin32u_unix.a
-            app/Madeira/libdxmt_combined.a
-          )
-          for library in "${required[@]}"; do
-            test -s "$library"
-            xcrun --sdk iphoneos ar t "$library" >/dev/null
-          done
-
-      - name: Inspect project
-        run: |
-          xcodebuild -list -project app/Madeira.xcodeproj
-
-      - name: Build unsigned IPA
-        run: |
-          set -euo pipefail
-          rm -rf build/DerivedData build/IPA
-          mkdir -p build/IPA
-          xcodebuild \
-            -project app/Madeira.xcodeproj \
-            -scheme Madeira \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            clean build
-          APP_PATH=$(find build/DerivedData/Build/Products -type d -name "Madeira.app" -path "*/Release-iphoneos/*" | head -n 1)
-          test -n "$APP_PATH"
-          mkdir -p build/IPA/Payload
-          cp -R "$APP_PATH" build/IPA/Payload/Madeira.app
-          cd build/IPA
-          zip -qry Madeira.ipa Payload
-          test -s Madeira.ipa
-
-      - name: Create release and upload IPA
-        uses: softprops/action-gh-release@v2
+      - name: Build and validate unsigned IPA
+        run: bash build/ci/package.sh
+      - name: Preserve IPA artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Madeira IPA build ${{ github.run_number }}
-          generate_release_notes: true
-          files: build/IPA/Madeira.ipa
+          name: Madeira-unsigned
+          path: |
+            build/IPA/Madeira.ipa
+            build/IPA/Madeira.ipa.sha256
+          if-no-files-found: error
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: build-${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
+            --title "Madeira unsigned IPA build ${{ github.run_number }}" \
+            --notes "Unsigned arm64 iOS build. Requires signing and the project's device/JIT setup. See the included SHA-256 checksum." \
+            build/IPA/Madeira.ipa build/IPA/Madeira.ipa.sha256
+          mkdir -p build/release-verification
+          gh release download "$RELEASE_TAG" --dir build/release-verification \
+            --pattern Madeira.ipa --pattern Madeira.ipa.sha256
+          cd build/release-verification
+          shasum -a 256 -c Madeira.ipa.sha256
+          cmp Madeira.ipa ../IPA/Madeira.ipa
+          gh release view "$RELEASE_TAG" --json url,assets
+      - name: Preserve Xcode log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: ignore

@@ -18,6 +18,7 @@ OBJ_DIR="$BUILD_DIR/obj"
 APP_LIB="$REPO_ROOT/app/Madeira/libwin32u_unix.a"
 
 mkdir -p "$OBJ_DIR"
+rm -f "$OBJ_DIR"/*.o "$OBJ_DIR"/*.a
 
 SUCCEEDED=0
 FAILED=0
@@ -59,6 +60,7 @@ compile_one() {
         SUCCEEDED=$((SUCCEEDED + 1))
     else
         echo "FAILED"
+        cat "$OBJ_DIR/$name.err"
         FAILED=$((FAILED + 1))
         FAILED_FILES="$FAILED_FILES $name"
     fi

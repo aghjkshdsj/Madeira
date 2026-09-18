@@ -11,16 +11,7 @@ SHIMS_DIR="$REPO_ROOT/build/ntdll-unix/shims"
 # Object files and library go in build dir
 OBJ_DIR="$BUILD_DIR/obj"
 mkdir -p "$OBJ_DIR"
-
-# Copy the base library if we don't have one yet
-if [ ! -f "$OBJ_DIR/libwineserver.a" ]; then
-    if [ -f "$APP_LIB" ]; then
-        cp "$APP_LIB" "$OBJ_DIR/libwineserver.a"
-    else
-        echo "ERROR: No base libwineserver.a found"
-        exit 1
-    fi
-fi
+rm -f "$OBJ_DIR"/*.o
 
 CC_FLAGS=(
     -arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 -O2
@@ -105,73 +96,25 @@ else
     echo "FAILED"; cat "$OBJ_DIR/err-kill.txt"; exit 1
 fi
 
-case "${1:-all}" in
-    all)
-        echo "=== Building all patched wineserver files ==="
-        for entry in "${PATCHED_FILES[@]}"; do
-            IFS=: read -r name src old_obj <<< "$entry"
-            # Support absolute paths (e.g. upstream files via $WINE_SRC)
-            if [[ "$src" == /* ]]; then
-                compile_one "$src" "$name"
-            else
-                compile_one "$BUILD_DIR/$src" "$name"
-            fi
-        done
-        ;;
-    request|main|mach|unicode)
-        for entry in "${PATCHED_FILES[@]}"; do
-            IFS=: read -r name src old_obj <<< "$entry"
-            if [[ "$name" == "${1}_ios" || "$name" == "${1}" ]]; then
-                compile_one "$BUILD_DIR/$src" "$name"
-            fi
-        done
-        ;;
-    *)
-        echo "Usage: $0 [all|request|main|mach|unicode]"
-        exit 1
-        ;;
-esac
-
-echo ""
-echo "=== Updating libwineserver.a ==="
-
-# Map of patched .o files to the original .o names they replace
-# Pairs of "new_obj_filename:old_obj_filename_in_archive". Plain array
-# iteration to avoid bash assoc-array word-splitting issues seen in zsh-launched
-# build environments.
-REPLACEMENTS=(
-    "wine_log_ios.o:wine_log_ios.o"
-    "request_ios.o:request.o"
-    "main_ios.o:main.o"
-    "mach_ios.o:mach.o"
-    "unicode_ios.o:unicode.o"
-    "fd_ios.o:fd.o"
-    "process_ios.o:process.o"
-    "wineserver_ios_kill.o:wineserver_ios_kill.o"
-    "window.o:window.o"
-    "user.o:user.o"
-    "class.o:class.o"
-    "region.o:region.o"
-    "queue.o:queue.o"
-    "mapping.o:mapping.o"
-    "winstation.o:winstation.o"
-    "thread.o:thread.o"
-    "sock.o:sock.o"
-    "object.o:object.o"
-    "async.o:async.o"
-)
-
-for entry in "${REPLACEMENTS[@]}"; do
-    new_obj="${entry%%:*}"
-    old_obj="${entry##*:}"
-    if [ -f "$OBJ_DIR/$new_obj" ]; then
-        ar d "$OBJ_DIR/libwineserver.a" "$old_obj" 2>/dev/null || true
-        ar d "$OBJ_DIR/libwineserver.a" "$new_obj" 2>/dev/null || true
-        ar r "$OBJ_DIR/libwineserver.a" "$OBJ_DIR/$new_obj"
-    fi
+echo "=== Building every wineserver object from source ==="
+for source in "$WINE_SRC"/server/*.c; do
+    name=$(basename "$source" .c)
+    for entry in "${PATCHED_FILES[@]}"; do
+        IFS=: read -r patched_name patched_source old_object <<< "$entry"
+        if [ "$old_object" = "$name.o" ]; then
+            case "$patched_source" in
+                /*) source="$patched_source" ;;
+                *) source="$BUILD_DIR/$patched_source" ;;
+            esac
+            break
+        fi
+    done
+    compile_one "$source" "$name"
 done
+compile_one "$BUILD_DIR/wine_log_ios.c" wine_log_ios
+rm -f "$OBJ_DIR/libwineserver.a"
+ar rcs "$OBJ_DIR/libwineserver.a" "$OBJ_DIR"/*.o
 
-echo ""
 echo "=== Renaming colliding symbols in every .o (objcopy sweep) ==="
 # Renames internal-to-archive: extract every .o, rename the 10 symbols
 # we know collide with win32u-unix, repackage. Affects definitions AND

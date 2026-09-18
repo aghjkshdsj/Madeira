@@ -14,7 +14,7 @@
 #    meaningless on iOS), no tools/tests/docs.
 #  - Stage markers make re-runs skip completed stages; delete
 #    obj/<stage>.done to force a rebuild.
-set -e
+set -eE
 
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$BUILD_DIR/../.." && pwd)"
@@ -45,6 +45,8 @@ HOST=aarch64-apple-darwin
 JOBS=$(sysctl -n hw.ncpu)
 
 mkdir -p "$OBJ_DIR" "$PREFIX"
+trap 'status=$?; tail -n 80 "$OBJ_DIR"/*.log; exit "$status"' ERR
+(cd "$SRC_DIR" && shasum -a 256 -c SHA256SUMS)
 
 extract() { # tarball, dirname
     if [ ! -d "$OBJ_DIR/$2" ]; then
@@ -74,7 +76,7 @@ if [ ! -f "$OBJ_DIR/nettle.done" ]; then
     echo "=== configuring nettle ==="
     cd "$OBJ_DIR/nettle-$NETTLE_VER"
     ./configure --host=$HOST --prefix="$PREFIX" \
-        --enable-static --disable-shared --disable-documentation \
+        --enable-static --disable-shared --disable-documentation --disable-assembler \
         --with-include-path="$PREFIX/include" --with-lib-path="$PREFIX/lib" \
         > "$OBJ_DIR/nettle-configure.log" 2>&1
     echo "=== building nettle ==="
