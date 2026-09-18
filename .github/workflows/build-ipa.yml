@@ -162,6 +162,31 @@ jobs:
       - name: Build FEX for iOS
         run: |
           set -euo pipefail
+
+          # The pinned iOS FEX branch references these diagnostic counters from
+          # the Madeira iOS instrumentation, but the declarations are absent
+          # from the checked-out branch. Define the counters before compiling.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("FEX/FEXCore/Source/Interface/Core/Core.cpp")
+          s = p.read_text()
+          marker = "#include <cstdint>\\n"
+          defs = (
+              "#include <cstdint>\\n"
+              "\\n"
+              "// Madeira iOS diagnostic counters.\\n"
+              "static uint64_t IosFfsBypassLog[4] = {};\\n"
+              "static uint64_t IosCbEntryLog[8] = {};\\n"
+          )
+          if "IosFfsBypassLog[4]" not in s:
+              if marker in s:
+                  s = s.replace(marker, defs, 1)
+              else:
+                  s = "#include <cstdint>\\n" + s
+                  s = s.replace("#include <cstdint>\\n", defs, 1)
+              p.write_text(s)
+          PY
+
           cmake -S FEX -B FEX/build-ios -G Ninja             -DCMAKE_SYSTEM_NAME=iOS -DTUNE_CPU=generic -DCMAKE_SYSTEM_PROCESSOR=arm64             -DCMAKE_OSX_ARCHITECTURES=arm64             -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0             -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)"             -DCMAKE_BUILD_TYPE=Release             -DBUILD_TESTING=OFF             -DBUILD_FEX_LINUX_TESTS=OFF             -DBUILD_THUNKS=OFF             -DBUILD_FEXCONFIG=OFF             -DBUILD_STEAM_SUPPORT=OFF             -DENABLE_ZYDIS=OFF             -DENABLE_LTO=OFF             -DENABLE_CCACHE=OFF             -DENABLE_FEX_ALLOCATOR=OFF             -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
 
           cmake --build FEX/build-ios --target FEXCore FEXCore_Base JemallocLibs --parallel 3
