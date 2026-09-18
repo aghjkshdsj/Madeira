@@ -194,6 +194,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          brew list --versions bison >/dev/null 2>&1 || brew install bison
+          export PATH="$(brew --prefix bison)/bin:$PATH"
+
           mkdir -p wine/build-macos
           (
             cd wine/build-macos
