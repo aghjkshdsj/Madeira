@@ -359,7 +359,7 @@ jobs:
           set -euo pipefail
           gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
             --title "Something PC unsigned IPA build ${{ github.run_number }}" \
-            --notes "Something PC 0.3: adaptive game library, PC desktop tile, C:\Games discovery, folder/Custom EXE import, cover artwork, long-press per-game settings, and unexpected-close log sharing. Optional bundled ARM64 Visual C++ activates without running the installer. Runtime compatibility and on-device UI still require testing; no guarantee that every game runs. Restart before switching games or runtime profiles. Requires signing and your existing JIT setup. Back up your games before updating." \
+            --notes "Something PC 0.3.1: stricter EXE-only game cards. Discovery, EXE import and launch validate Windows executable headers and reject data files, disguised DLLs and non-executable images. Cards display their actual EXE filename. Folder import still preserves all required game data. Includes the existing library, per-game settings and crash-log sharing. This release does not claim to fix the reported Wine/game/JIT crashes. Requires signing and your existing JIT setup. Back up your games before updating." \
             build/IPA/SomethingPC.ipa build/IPA/SomethingPC.ipa.sha256
           mkdir -p build/release-verification
           gh release download "$RELEASE_TAG" --dir build/release-verification \

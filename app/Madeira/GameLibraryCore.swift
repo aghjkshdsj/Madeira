@@ -42,7 +42,7 @@ enum GameFiles {
         return candidate.hasPrefix(base + "/")
     }
 
-    static func machine(_ url: URL) throws -> UInt16 {
+    private static func peHeader(_ url: URL) throws -> Data {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let header = try handle.read(upToCount: 64) ?? Data()
@@ -52,11 +52,33 @@ enum GameFiles {
         let offset = (0..<4).reduce(UInt32(0)) { $0 | UInt32(header[60 + $1]) << (8 * $1) }
         guard offset >= 64, offset <= 16_777_216 else { throw LibraryFailure.invalid("Invalid PE header.") }
         try handle.seek(toOffset: UInt64(offset))
-        let signature = try handle.read(upToCount: 6) ?? Data()
-        guard signature.count == 6, Array(signature.prefix(4)) == [0x50, 0x45, 0, 0] else {
+        let signature = try handle.read(upToCount: 26) ?? Data()
+        guard signature.count == 26, Array(signature.prefix(4)) == [0x50, 0x45, 0, 0] else {
             throw LibraryFailure.invalid("Invalid PE signature.")
         }
-        return UInt16(signature[4]) | UInt16(signature[5]) << 8
+        return signature
+    }
+
+    static func machine(_ url: URL) throws -> UInt16 {
+        let header = try peHeader(url)
+        return UInt16(header[4]) | UInt16(header[5]) << 8
+    }
+
+    static func gameExecutableMachine(_ url: URL) throws -> UInt16 {
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard url.pathExtension.lowercased() == "exe", values.isRegularFile == true,
+              values.isSymbolicLink != true else {
+            throw LibraryFailure.invalid("Select a Windows .exe game file, not game data, a folder, or a shortcut.")
+        }
+        let header = try peHeader(url)
+        let characteristics = UInt16(header[22]) | UInt16(header[23]) << 8
+        let optionalSize = UInt16(header[20]) | UInt16(header[21]) << 8
+        let magic = UInt16(header[24]) | UInt16(header[25]) << 8
+        guard characteristics & 0x0002 != 0, characteristics & 0x2000 == 0,
+              optionalSize >= 2, magic == 0x010b || magic == 0x020b else {
+            throw LibraryFailure.invalid("This file is not a Windows executable application. Renaming game data or a DLL to .exe does not make it playable.")
+        }
+        return UInt16(header[4]) | UInt16(header[5]) << 8
     }
 
     static func windowsPath(_ executable: URL, drive: URL) throws -> String {
@@ -78,6 +100,7 @@ enum GameFiles {
             if values.isSymbolicLink == true { enumerator.skipDescendants(); continue }
             guard values.isRegularFile == true, file.pathExtension.lowercased() == "exe",
                   isInside(file, root: root), !excluded.contains(where: { file.lastPathComponent.lowercased().hasPrefix($0) }) else { continue }
+            guard (try? gameExecutableMachine(file)) != nil else { continue }
             let folder = file.deletingLastPathComponent()
             let metadataURL = folder.appendingPathComponent("somethingpc-game.json")
             let metadata = (try? Data(contentsOf: metadataURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] } ?? [:]
@@ -106,7 +129,7 @@ enum GameFiles {
         guard values.isSymbolicLink != true, values.isDirectory == folder else { throw LibraryFailure.invalid("Choose a game folder or Windows EXE, not a shortcut.") }
         if !folder {
             guard source.pathExtension.lowercased() == "exe" else { throw LibraryFailure.invalid("Choose a Windows .exe file.") }
-            _ = try machine(source)
+            _ = try gameExecutableMachine(source)
         }
         let staging = root.appendingPathComponent(".import-" + UUID().uuidString, isDirectory: true)
         try manager.createDirectory(at: staging, withIntermediateDirectories: true)

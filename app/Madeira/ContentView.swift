@@ -961,7 +961,7 @@ struct ContentView: View {
                     unsetenv("MADEIRA_ARGS")
                     unsetenv("MADEIRA_DESKTOP")
                     if let executable = game.executable {
-                        let machine = try GameFiles.machine(executable)
+                        let machine = try GameFiles.gameExecutableMachine(executable)
                         guard [UInt16(0x8664), 0xaa64, 0xa641, 0xa64e].contains(machine) else {
                             throw LibraryFailure.invalid("This build supports 64-bit Windows games, not 32-bit x86 executables.")
                         }

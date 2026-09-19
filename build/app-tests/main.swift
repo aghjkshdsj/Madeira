@@ -18,10 +18,12 @@ let game = games.appendingPathComponent("Example Game", isDirectory: true)
 try manager.createDirectory(at: game, withIntermediateDirectories: true)
 
 func executable(_ machine: UInt16, at url: URL) throws {
-    var bytes = Data(repeating: 0, count: 128)
+    var bytes = Data(repeating: 0, count: 512)
     bytes[0] = 0x4d; bytes[1] = 0x5a; bytes[60] = 64
     bytes[64] = 0x50; bytes[65] = 0x45
     bytes[68] = UInt8(machine & 255); bytes[69] = UInt8(machine >> 8)
+    bytes[84] = 240; bytes[86] = 0x22
+    bytes[88] = 0x0b; bytes[89] = 0x02
     try bytes.write(to: url)
 }
 
@@ -55,6 +57,31 @@ let found = try GameFiles.discover(in: games)
 expect(found.count == 1, "discovery included helper executables or symlinks")
 expect(found[0].title == "Example Title" && found[0].publisher == "Example Studio", "local metadata")
 expect(found[0].cover?.lastPathComponent == "cover.png" && found[0].steamID == "480", "cover metadata")
+for name in ["assets.bin", "data.dll", "resources.dat", "level.pak", "Game.exe.bin", "Game.exe.txt", "shortcut.lnk"] {
+    let candidate = game.appendingPathComponent(name)
+    try executable(0x8664, at: candidate)
+    rejects("non-EXE accepted: \(name)") { _ = try GameFiles.gameExecutableMachine(candidate) }
+    rejects("non-EXE import accepted: \(name)") { try GameFiles.copyImport(candidate, to: games, folder: false) }
+}
+try Data("game data renamed as EXE".utf8).write(to: game.appendingPathComponent("renamed.bin.exe"))
+let disguisedDLL = game.appendingPathComponent("library.exe")
+try executable(0x8664, at: disguisedDLL)
+var dllBytes = try Data(contentsOf: disguisedDLL)
+dllBytes[87] = 0x20
+try dllBytes.write(to: disguisedDLL)
+rejects("DLL renamed EXE accepted") { _ = try GameFiles.gameExecutableMachine(disguisedDLL) }
+let invalidImage = game.appendingPathComponent("object.exe")
+try executable(0x8664, at: invalidImage)
+var objectBytes = try Data(contentsOf: invalidImage)
+objectBytes[86] = 0
+try objectBytes.write(to: invalidImage)
+rejects("non-executable PE accepted") { _ = try GameFiles.gameExecutableMachine(invalidImage) }
+try manager.createDirectory(at: game.appendingPathComponent("folder.exe"), withIntermediateDirectories: true)
+expect(try GameFiles.discover(in: games).map(\.id) == found.map(\.id), "non-EXE data, fake EXEs or DLLs became game cards")
+let uppercase = game.appendingPathComponent("Uppercase.EXE")
+try executable(0x8664, at: uppercase)
+expect(try GameFiles.discover(in: games).count == 2, "uppercase .EXE excluded")
+try manager.removeItem(at: uppercase)
 try Data("../../evil".utf8).write(to: game.appendingPathComponent("steam_appid.txt"))
 expect(try GameFiles.discover(in: games)[0].steamID == nil, "invalid Steam ID accepted")
 try GameFiles.copyImport(arm, to: games, folder: false)

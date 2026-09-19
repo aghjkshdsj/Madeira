@@ -232,6 +232,10 @@ private struct GameCard: View {
                 .clipShape(RoundedRectangle(cornerRadius: 16))
             Text(game.title).font(.headline).lineLimit(1)
             Text(game.publisher).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            if let executable = game.executable {
+                Text(executable.lastPathComponent).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
         }
         .padding(12).padding(.bottom, 10)
         .background(Color(white: 0.12), in: RoundedRectangle(cornerRadius: 24))
