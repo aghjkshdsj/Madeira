@@ -1,3 +1,4 @@
+#import "ControllerBridge.h"
 #import "JITAllocator.h"
 #import "FEXBridge.h"
 #import "WineServerBridge.h"

@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "WineProcessBridge.h"
+#include "ControllerBridge.h"
 #include "WineServerBridge.h"
 #include "PrefixExtractor.h"
 #include "FEXBridge.h"  // fex_get_jit_write_offset()
@@ -359,6 +360,9 @@ static void *wine_process_thread(void *arg) {
         madeira_seed_prefix_if_needed(g_prefix_path);
 
         // Set environment for Wine
+        if (spc_controller_open(g_prefix_path) != 0) {
+            LOG("Controller shared state could not be initialized");
+        }
         setenv("WINEPREFIX", g_prefix_path, 1);
         setenv("HOME", g_prefix_path, 1);
 
@@ -818,6 +822,39 @@ static void *wine_process_thread(void *arg) {
                 }
                 LOG("Symlinked %d MS VC++ Runtime DLLs (x86_64 native) over arm64ec builtins, skipped %d", vcrtLinked, vcrtSkipped);
                 dprintf(STDERR_FILENO, "[WineProc] Symlinked %d MS VC++ Runtime DLLs over arm64ec builtins (skipped %d for native EC SEH)\n", vcrtLinked, vcrtSkipped);
+            }
+        }
+
+        {
+            NSFileManager *manager = NSFileManager.defaultManager;
+            NSString *prefix = [NSString stringWithUTF8String:g_prefix_path];
+            NSString *bundle = NSBundle.mainBundle.bundlePath;
+            NSArray *farms = @[
+                @[@"system32", use_arm64ec ? @"x86_64" : @"aarch64"],
+                @[@"sysx64", @"x86_64"], @[@"sysaa64", @"aarch64"]];
+            for (NSArray *farm in farms) {
+                NSString *source = [bundle stringByAppendingPathComponent:
+                    [NSString stringWithFormat:@"ControllerSupport/%@", farm[1]]];
+                NSString *destination = [prefix stringByAppendingPathComponent:
+                    [NSString stringWithFormat:@"drive_c/windows/%@", farm[0]]];
+                for (NSString *name in [manager contentsOfDirectoryAtPath:source error:nil]) {
+                    if (![name.pathExtension.lowercaseString isEqualToString:@"dll"]) continue;
+                    NSString *target = [destination stringByAppendingPathComponent:name];
+                    [manager removeItemAtPath:target error:nil];
+                    NSError *error = nil;
+                    if (![manager createSymbolicLinkAtPath:target withDestinationPath:
+                        [source stringByAppendingPathComponent:name] error:&error])
+                        LOG("Controller DLL link failed: %{public}@", error);
+                }
+            }
+            NSString *runtimeSource = [bundle stringByAppendingPathComponent:@"RuntimeInstallers"];
+            NSString *runtimeDestination = [prefix stringByAppendingPathComponent:@"drive_c/SomethingPC/Runtimes"];
+            [manager createDirectoryAtPath:runtimeDestination withIntermediateDirectories:YES attributes:nil error:nil];
+            for (NSString *name in [manager contentsOfDirectoryAtPath:runtimeSource error:nil]) {
+                NSString *target = [runtimeDestination stringByAppendingPathComponent:name];
+                [manager removeItemAtPath:target error:nil];
+                [manager createSymbolicLinkAtPath:target withDestinationPath:
+                    [runtimeSource stringByAppendingPathComponent:name] error:nil];
             }
         }
 

@@ -52,6 +52,11 @@
 		A1000200 /* LogPattern.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000200 /* LogPattern.swift */; };
 		A1000201 /* LogTail.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000201 /* LogTail.swift */; };
 		A1000202 /* FPSOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000202 /* FPSOverlay.swift */; };
+		B1000301 /* EmulatorSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000301; };
+		B1000302 /* ControllerBridge.c in Sources */ = {isa = PBXBuildFile; fileRef = B2000302; };
+		B1000303 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B2000303; };
+		B1000304 /* ControllerSupport in Resources */ = {isa = PBXBuildFile; fileRef = B2000304; };
+		B1000305 /* RuntimeInstallers in Resources */ = {isa = PBXBuildFile; fileRef = B2000305; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -111,6 +116,11 @@
 		A2000200 /* LogPattern.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogPattern.swift; sourceTree = "<group>"; };
 		A2000201 /* LogTail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogTail.swift; sourceTree = "<group>"; };
 		A2000202 /* FPSOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FPSOverlay.swift; sourceTree = "<group>"; };
+		B2000301 /* EmulatorSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmulatorSettings.swift; sourceTree = "<group>"; };
+		B2000302 /* ControllerBridge.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = ControllerBridge.c; sourceTree = "<group>"; };
+		B2000303 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B2000304 /* ControllerSupport */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ControllerSupport; sourceTree = "<group>"; };
+		B2000305 /* RuntimeInstallers */ = {isa = PBXFileReference; lastKnownFileType = folder; path = RuntimeInstallers; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -160,6 +170,11 @@
 			children = (
 				A2000001 /* MadeiraApp.swift */,
 				A2000002 /* ContentView.swift */,
+				B2000301 /* EmulatorSettings.swift */,
+				B2000302 /* ControllerBridge.c */,
+				B2000303 /* Assets.xcassets */,
+				B2000304 /* ControllerSupport */,
+				B2000305 /* RuntimeInstallers */,
 				A2000003 /* LogStore.swift */,
 				A2000200 /* LogPattern.swift */,
 				A2000201 /* LogTail.swift */,
@@ -297,6 +312,9 @@
 				A1000081 /* x86_64-vcruntime in Resources */,
 				A1000040 /* prefix-template.tar.gz in Resources */,
 				A1000094 /* cacert.pem in Resources */,
+				B1000303 /* Assets.xcassets in Resources */,
+				B1000304 /* ControllerSupport in Resources */,
+				B1000305 /* RuntimeInstallers in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -309,6 +327,8 @@
 			files = (
 				A1000001 /* MadeiraApp.swift in Sources */,
 				A1000002 /* ContentView.swift in Sources */,
+				B1000301 /* EmulatorSettings.swift in Sources */,
+				B1000302 /* ControllerBridge.c in Sources */,
 				A1000003 /* LogStore.swift in Sources */,
 				A1000200 /* LogPattern.swift in Sources */,
 				A1000201 /* LogTail.swift in Sources */,
@@ -429,7 +449,7 @@
 					"$(SRCROOT)/../FEX/build-ios/External/SoftFloat-3e",
 					"$(SRCROOT)/Madeira",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.willfaust.mythicemu;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -480,7 +500,7 @@
 					"$(SRCROOT)/../FEX/build-ios/External/SoftFloat-3e",
 					"$(SRCROOT)/Madeira",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.willfaust.mythicemu;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

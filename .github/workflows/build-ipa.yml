@@ -1,4 +1,4 @@
-name: Build Madeira IPA
+name: Build Something PC IPA
 
 on:
   workflow_dispatch:
@@ -77,12 +77,66 @@ jobs:
             Copy-Item -LiteralPath $source -Destination (Join-Path $runtimeDir $dllName) -Force
           }
 
+      - name: Collect verified runtime installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $folder = Join-Path $env:GITHUB_WORKSPACE "runtime/RuntimeInstallers"
+          New-Item -ItemType Directory -Force -Path $folder | Out-Null
+          Copy-Item -LiteralPath (Join-Path $env:RUNNER_TEMP "VC_redist.x64.exe") -Destination (Join-Path $folder "VC_redist.x64.exe")
+          $arm64 = Join-Path $folder "VC_redist.arm64.exe"
+          Invoke-WebRequest -Uri "https://aka.ms/vc14/vc_redist.arm64.exe" -OutFile $arm64
+          foreach ($installer in Get-ChildItem -LiteralPath $folder -Filter "*.exe") {
+            $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+            if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notmatch "Microsoft") {
+              throw "Invalid Microsoft installer signature: $($installer.Name)"
+            }
+            Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256
+          }
+      - name: Upload runtime installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-installers
+          path: runtime/RuntimeInstallers
+          if-no-files-found: error
+
       - name: Upload VC++ runtime artifact
         uses: actions/upload-artifact@v4
         with:
           name: vc-runtime-x64
           path: runtime/x86_64-vcruntime
           if-no-files-found: error
+
+  controllers:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows controller bridge
+        run: bash build/controller/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: controller-support
+          path: app/Madeira/ControllerSupport
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: controller-test
+          path: build/controller/out/controller-test.exe
+          if-no-files-found: error
+
+  controller-tests:
+    needs: controllers
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: controller-test
+      - name: Exercise XInput shared-state bridge
+        shell: pwsh
+        run: |
+          ./controller-test.exe
+          if ($LASTEXITCODE -ne 0) { throw "Controller bridge tests failed" }
 
   native:
     runs-on: macos-26
@@ -176,7 +230,7 @@ jobs:
           if-no-files-found: ignore
 
   release:
-    needs: [prepare-vc-runtime, native]
+    needs: [prepare-vc-runtime, native, controllers, controller-tests]
     runs-on: macos-26
     timeout-minutes: 60
     permissions:
@@ -206,15 +260,29 @@ jobs:
           for dll in app/Madeira/x86_64-vcruntime/*.dll; do
             file "$dll" | grep -q x86-64
           done
+      - uses: actions/download-artifact@v4
+        with:
+          name: controller-support
+          path: app/Madeira/ControllerSupport
+      - uses: actions/download-artifact@v4
+        with:
+          name: runtime-installers
+          path: app/Madeira/RuntimeInstallers
       - name: Build and validate unsigned IPA
-        run: bash build/ci/package.sh
+        run: |
+          set -euo pipefail
+          bash build/ci/package.sh
+          test -s build/DerivedData/Build/Products/Release-iphoneos/Madeira.app/Assets.car
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleDisplayName' build/DerivedData/Build/Products/Release-iphoneos/Madeira.app/Info.plist)" = "Something PC"
+          mv build/IPA/Madeira.ipa build/IPA/SomethingPC.ipa
+          (cd build/IPA && shasum -a 256 SomethingPC.ipa > SomethingPC.ipa.sha256)
       - name: Preserve IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Madeira-unsigned
+          name: SomethingPC-unsigned
           path: |
-            build/IPA/Madeira.ipa
-            build/IPA/Madeira.ipa.sha256
+            build/IPA/SomethingPC.ipa
+            build/IPA/SomethingPC.ipa.sha256
           if-no-files-found: error
       - name: Publish release
         env:
@@ -224,15 +292,15 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
-            --title "Madeira unsigned IPA build ${{ github.run_number }}" \
-            --notes "Unsigned arm64 iOS build. Requires signing and the project's device/JIT setup. See the included SHA-256 checksum." \
-            build/IPA/Madeira.ipa build/IPA/Madeira.ipa.sha256
+            --title "Something PC unsigned IPA build ${{ github.run_number }}" \
+            --notes "Something PC: new icon, graphics settings, controller detection/testing, XInput bridge and keyboard fallback. Controller CI tests passed; physical controllers and game-specific compatibility require device testing. Includes official Microsoft runtime installers, not a claim that all prerequisite errors are fixed. Requires signing and the existing device/JIT setup. Back up your games before updating." \
+            build/IPA/SomethingPC.ipa build/IPA/SomethingPC.ipa.sha256
           mkdir -p build/release-verification
           gh release download "$RELEASE_TAG" --dir build/release-verification \
-            --pattern Madeira.ipa --pattern Madeira.ipa.sha256
+            --pattern SomethingPC.ipa --pattern SomethingPC.ipa.sha256
           cd build/release-verification
-          shasum -a 256 -c Madeira.ipa.sha256
-          cmp Madeira.ipa ../IPA/Madeira.ipa
+          shasum -a 256 -c SomethingPC.ipa.sha256
+          cmp SomethingPC.ipa ../IPA/SomethingPC.ipa
           gh release view "$RELEASE_TAG" --json url,assets
       - name: Preserve Xcode log
         if: always()

@@ -28,6 +28,7 @@ extern "C" {
 /* Build the driver-funcs struct and register it via __wine_set_user_driver.
  * Idempotent: safe to call repeatedly; first call wins. */
 void winios_drv_register(void);
+void winios_set_presentation_hidden(int hidden);
 
 /* Touch → mouse bridge. Called by Madeira Swift's UIKit gesture
  * handlers; events are queued to a thread-safe ring buffer and drained

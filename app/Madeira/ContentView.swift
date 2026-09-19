@@ -68,7 +68,7 @@ final class MetalHostView: UIView {
             LogStore.shared.log("MetalLayer: ml651 nominalFPS=\(hz) (was hardcoded 60; "
                                 + "display link asks preferred=120)")
         }
-        UIApplication.shared.isIdleTimerDisabled = true
+        UIApplication.shared.isIdleTimerDisabled = EmulatorSettings.shared.keepAwake
         // Set once so DXMT's swapchain setup never blocks on a zero-sized
         // layer. After this, DXMT's setProps is the ONLY drawableSize
         // writer — per-layout rewrites from the app were a second writer
@@ -123,7 +123,8 @@ final class MetalBackedView: UIView {
     /// display edges (2026-07-05). Touch mapping uses the same rect so
     /// letterboxing never skews input.
     private func gameRect() -> CGRect {
-        let gw: CGFloat = 1024, gh: CGFloat = 768
+        let size = EmulatorSettings.activeSize
+        let gw = size.width, gh = size.height
         let scale = min(bounds.width / gw, bounds.height / gh)
         let w = gw * scale, h = gh * scale
         return CGRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2,
@@ -179,8 +180,9 @@ final class MetalBackedView: UIView {
     private func mapTouch(_ touch: UITouch) -> (Int32, Int32) {
         let p = touch.location(in: self)
         let r = gameRect()
-        let x = Int32(min(max((p.x - r.minX) * 1024 / r.width, 0), 1023))
-        let y = Int32(min(max((p.y - r.minY) * 768 / r.height, 0), 767))
+        let size = EmulatorSettings.activeSize
+        let x = Int32(min(max((p.x - r.minX) * size.width / r.width, 0), size.width - 1))
+        let y = Int32(min(max((p.y - r.minY) * size.height / r.height, 0), size.height - 1))
         return (x, y)
     }
 
@@ -851,6 +853,8 @@ struct ContentView: View {
     @State private var debuggerAttached = isDebuggerAttached()
     @ObservedObject private var input = InputSettings.shared
     @State private var pointerPanel = false
+    @State private var settingsPresented = false
+    @ObservedObject private var settings = EmulatorSettings.shared
     @Namespace private var pointerNS
     /// .compact = iPhone landscape: game surface expands, arrow keys appear.
     @Environment(\.verticalSizeClass) private var vSizeClass
@@ -883,10 +887,23 @@ struct ContentView: View {
             // this if/else (two SwiftUI identities) — HARMLESS since
             // 2026-07-05: MetalHostView is a process-lifetime singleton;
             // a fresh placeholder only re-parents the same CAMetalLayer.
-            .navigationTitle("Madeira")
+            .navigationTitle("Something PC")
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarHidden(vSizeClass == .compact)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { settingsPresented = true } label: { Image(systemName: "gearshape") }
+                        .accessibilityLabel("Settings")
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: Notification.Name("somethingpc.openSettings"))) { _ in
+                settingsPresented = true
+            }
+            .fullScreenCover(isPresented: $settingsPresented, onDismiss: { setSettingsVisible(false) }) {
+                EmulatorSettingsView().onAppear { setSettingsVisible(true) }
+            }
             .onAppear {
+                _ = GameControllerManager.shared
                 jit_install_trap_handler()
                 entitlements = EntitlementStatus.check()
                 logEntitlementStatus()
@@ -896,6 +913,14 @@ struct ContentView: View {
 
     /// Portrait: classic tooling layout — header, badges, 240pt game strip,
     /// key row, action buttons, log console.
+    private func setSettingsVisible(_ visible: Bool) {
+        GameControllerManager.shared.suspended = visible
+        MetalHostView.shared.isHidden = visible
+        winios_set_presentation_hidden(visible ? 1 : 0)
+        TouchControlsHost.setSuspended(visible)
+        JoystickPadState.shared.hidden = visible || pointerPanel
+    }
+
     private var portraitBody: some View {
         VStack(spacing: 0) {
             // Readouts sit ABOVE the game strip, closest to the surface they
@@ -911,7 +936,7 @@ struct ContentView: View {
                 entitlementBadges(ents)
             }
             HStack(spacing: 6) {
-                FPSOverlay()
+                if settings.showFPS { FPSOverlay() }
                 Spacer()
             }
             .padding(.horizontal, 8)
@@ -968,7 +993,8 @@ struct ContentView: View {
     /// anything drawn over the game area itself. No header/log/nav chrome.
     private var landscapeBody: some View {
         GeometryReader { geo in
-            let gameW = min(geo.size.width, geo.size.height * 4.0 / 3.0)
+            let size = EmulatorSettings.activeSize
+            let gameW = min(geo.size.width, geo.size.height * size.width / size.height)
             let barW = max((geo.size.width - gameW) / 2.0, 44)
             ZStack {
                 Color.black
@@ -980,7 +1006,7 @@ struct ContentView: View {
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
                     VStack {
-                        FPSOverlay(compact: true)
+                        if settings.showFPS { FPSOverlay(compact: true) }
                         Spacer()
                     }
                     .frame(width: barW)
@@ -1154,7 +1180,7 @@ struct ContentView: View {
                     // render), -console (Steam's own log → our stderr). Steam
                     // WILL try to self-update through our GnuTLS stack — that
                     // attempt is itself an informative S0 re-test.
-                    let deskW = 1024, deskH = 768
+                    let deskW = settings.width, deskH = settings.height
                     // ml589: find Steam and (re)write the launch batch. Returns
                     // false — having logged why — when there is nothing to run.
                     guard prepareSteamLaunch() else { return }
@@ -1426,7 +1452,7 @@ struct ContentView: View {
                     // Known risk: if shellwindows_init beats services.exe's
                     // RPC_Init, OpenSCManager fails → watch whether that
                     // fails fast or hits the RaiseException→CS wedge again.
-                    let deskW = 960, deskH = 540
+                    let deskW = settings.width, deskH = settings.height
                     setenv("MADEIRA_EXE", "explorer.exe", 1)
                     setenv("MADEIRA_ARGS",
                            "/desktop=shell,\(deskW)x\(deskH) C:\\windows\\system32\\services.exe", 1)
@@ -1737,6 +1763,7 @@ struct ContentView: View {
     /// Debugger stays attached during PE loading so mprotect_exec can use BRK
     /// to prepare code pages. Detach happens after Wine finishes + recovery.
     private func runWineFullSequence() {
+        if wineserver_is_running() == 0 { settings.applyResolution() }
         guard jit_check_debugged() else {
             logStore.log("JIT not enabled. Press 'Enable JIT' first.", level: .error)
             return
@@ -2391,7 +2418,7 @@ struct SetupGuideView: View {
                     guideRow(
                         icon: "cpu",
                         title: "JIT Compilation",
-                        detail: "Required for x86 code translation. On iOS 26, StikDebug must stay attached — assign the 'universal' or 'MeloNX' JIT script to Madeira in StikDebug."
+                        detail: "Required for x86 code translation. On iOS 26, StikDebug must stay attached — assign the 'universal' or 'MeloNX' JIT script to Something PC in StikDebug."
                     )
                     guideRow(
                         icon: "memorychip",
@@ -2406,15 +2433,15 @@ struct SetupGuideView: View {
                 }
 
                 Section("Setup Steps") {
-                    stepRow(number: 1, text: "Install Madeira via SideStore or Xcode")
+                    stepRow(number: 1, text: "Install Something PC via SideStore or Xcode")
                     stepRow(number: 2, text: "Install GetMoreRam and run it to inject memory entitlements into your App ID")
-                    stepRow(number: 3, text: "Reinstall Madeira with the same IPA to apply injected entitlements")
+                    stepRow(number: 3, text: "Reinstall Something PC with the same IPA to apply injected entitlements")
                     stepRow(number: 4, text: "In StikDebug, assign the 'universal' JIT script to Madeira and launch it")
-                    stepRow(number: 5, text: "Launch Madeira and tap 'Test JIT' to verify")
+                    stepRow(number: 5, text: "Launch Something PC and tap 'Test JIT' to verify")
                 }
 
                 Section("About") {
-                    Text("Madeira is a proof-of-concept for running x86 Windows games on iOS using FEX-Emu, Wine, and Metal-based graphics translation.")
+                    Text("Something PC is based on Madeira, a proof-of-concept for running x86 Windows games on iOS using FEX-Emu, Wine, and Metal-based graphics translation.")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -2593,7 +2620,7 @@ final class TouchControlsModel: ObservableObject {
         // Top bar: two 44pt buttons 10pt apart in play mode, centred, 10pt down.
         // Padded generously; a few points of slop costs nothing and a missed tap
         // costs a build.
-        let barW: CGFloat = 2 * 44 + 10
+        let barW: CGFloat = 3 * 44 + 20
         if CGRect(x: bounds.midX - barW / 2 - 10, y: 0,
                   width: barW + 20, height: 68).contains(p) { return true }
         guard visible else { return false }
@@ -2628,6 +2655,12 @@ final class ControlsWindow: UIWindow {
 
 enum TouchControlsHost {
     private static var window: ControlsWindow?
+    private static var suspended = false
+
+    static func setSuspended(_ value: Bool) {
+        suspended = value
+        window?.isHidden = value
+    }
 
     static func attach() {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -2643,7 +2676,7 @@ enum TouchControlsHost {
             // ordering nothing inside the app window can undo.
             w.windowLevel = .normal + 101
             w.backgroundColor = .clear
-            w.isHidden = false        // deliberately never made key
+            w.isHidden = suspended
             let host = UIHostingController(rootView: TouchControlsOverlay())
             host.view.backgroundColor = .clear
             w.rootViewController = host
@@ -2685,6 +2718,9 @@ struct TouchControlsOverlay: View {
 
     private var topBar: some View {
         HStack(spacing: 10) {
+            glassButton("gearshape", dim: false) {
+                NotificationCenter.default.post(name: Notification.Name("somethingpc.openSettings"), object: nil)
+            }
             glassButton("gamecontroller", dim: !m.visible) { m.visible.toggle() }
             glassButton(m.editing ? "checkmark" : "pencil") {
                 m.editing.toggle()
@@ -2889,8 +2925,8 @@ struct TouchControlButton: View {
             if down { MetalBackedView.toggleKeyboard() }
         case .none, .joystickWASD, .joystickArrows:
             break                                              // sticks drive themselves
-        case .pad:
-            break     // ml645: no XInput yet — deliberately inert, and labelled so
+        case .pad(let name):
+            GameControllerManager.shared.setVirtualButton(name, down: down)
         }
     }
 }
@@ -3028,8 +3064,7 @@ struct MappingPanel: View {
 
     private var controllerTab: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("XInput isn't wired up yet. These save with your layout but do "
-                 + "nothing when pressed — controller support lands with the Wine HID stack.")
+            Text("Xbox-compatible buttons are sent to player 1 through XInput. Connect a physical controller for analog sticks, or use the keyboard stick controls.")
                 .font(.system(size: 11))
                 .foregroundStyle(.orange.opacity(0.95))
                 .fixedSize(horizontal: false, vertical: true)
@@ -3038,8 +3073,7 @@ struct MappingPanel: View {
                               ("D←", .pad("D←")), ("D→", .pad("D→"))])
             section("Bumpers & triggers", [("LB", .pad("LB")), ("RB", .pad("RB")),
                                            ("LT", .pad("LT")), ("RT", .pad("RT"))])
-            section("Sticks", [("LS", .pad("LS")), ("RS", .pad("RS")),
-                               ("L3", .pad("L3")), ("R3", .pad("R3"))])
+            section("Stick clicks", [("L3", .pad("L3")), ("R3", .pad("R3"))])
             section("System", [("Menu", .pad("Menu")), ("View", .pad("View")),
                                ("Guide", .pad("Guide"))])
         }

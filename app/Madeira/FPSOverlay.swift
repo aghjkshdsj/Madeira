@@ -44,6 +44,7 @@ struct FPSOverlay: View {
     /// Compact = landscape side-bar variant: FPS + pacing pill stacked
     /// vertically, no present counter (fits a ~120pt pillarbox bar).
     var compact: Bool = false
+    @ObservedObject private var settings = EmulatorSettings.shared
     @State private var presentCount: UInt64 = 0
     @State private var fps: Double = 0
     @State private var visible: Bool = true
@@ -156,7 +157,7 @@ struct FPSOverlay: View {
                 .stroke(pillColor, lineWidth: 1))
             .onTapGesture {
                 vsyncMode = vsyncMode == 1 ? 0 : (vsyncMode == 0 ? 2 : 1)
-                madeira_set_vsync_locked(vsyncMode)
+                settings.presentationMode = vsyncMode
                 ProMotionIntent.shared.setActive(vsyncMode != 1)
             }
     }
@@ -196,6 +197,7 @@ struct FPSOverlay: View {
 
         // 100ms sampling — keeps the buffer fresh
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+            vsyncMode = settings.presentationMode
             let t = CFAbsoluteTimeGetCurrent()
             let cur = madeira_get_present_count()
             samples.append((t, cur))

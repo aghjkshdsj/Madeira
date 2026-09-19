@@ -596,6 +596,14 @@ static void winios_apply_contents_rect(NSNumber *key, CALayer *l) {
                                 MIN(px.size.height / surf.height, 1.0));
 }
 static UIView *g_compositor_view;
+static BOOL g_presentation_hidden;
+
+void winios_set_presentation_hidden(int hidden) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        g_presentation_hidden = hidden != 0;
+        g_compositor_view.hidden = g_presentation_hidden;
+    });
+}
 static CALayer *g_desk_bg;               /* teal desktop-area backdrop */
 static CGFloat g_px_to_pt = 1.0 / 3.0;   /* desktop px → screen pt */
 static CGPoint g_desk_origin;            /* desktop (0,0) in view pt (letterbox offset) */
@@ -672,6 +680,7 @@ static void winios_ensure_compositor(void) {
     g_compositor_view = [[UIView alloc] initWithFrame:win.bounds];
     g_compositor_view.userInteractionEnabled = NO;  /* touches fall through */
     g_compositor_view.clipsToBounds = YES;
+    g_compositor_view.hidden = g_presentation_hidden;
     /* letterbox area: near-black; desktop area: classic teal (until
      * explorer's own background paint works) */
     g_compositor_view.backgroundColor = [UIColor colorWithWhite:0.08 alpha:1.0];
