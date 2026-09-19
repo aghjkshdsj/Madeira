@@ -12,6 +12,8 @@ int wine_process_start(const char *prefix_path);
 
 // Check if Wine process is running
 int wine_process_is_running(void);
+void madeira_seed_prefix_if_needed(const char *prefix_path);
+int spc_install_arm64_runtime(const char *prefix_path);
 
 // Steam S0 net-test VPN gate: write C:\madeira-continue.flag into the
 // prefix's drive_c so the paused winhttp-test.exe resumes to the Steam

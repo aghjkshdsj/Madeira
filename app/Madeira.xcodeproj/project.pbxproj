@@ -57,6 +57,11 @@
 		B1000303 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B2000303; };
 		B1000304 /* ControllerSupport in Resources */ = {isa = PBXBuildFile; fileRef = B2000304; };
 		B1000305 /* RuntimeInstallers in Resources */ = {isa = PBXBuildFile; fileRef = B2000305; };
+		B1000400 /* CrashRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000400; };
+		B1000410 /* GameLibraryCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000410; };
+		B1000420 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000420; };
+		B1000430 /* RuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000430; };
+		B1000440 /* ARM64Runtime in Resources */ = {isa = PBXBuildFile; fileRef = B2000440; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -121,6 +126,11 @@
 		B2000303 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B2000304 /* ControllerSupport */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ControllerSupport; sourceTree = "<group>"; };
 		B2000305 /* RuntimeInstallers */ = {isa = PBXFileReference; lastKnownFileType = folder; path = RuntimeInstallers; sourceTree = "<group>"; };
+		B2000400 /* CrashRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashRecovery.swift; sourceTree = "<group>"; };
+		B2000410 /* GameLibraryCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameLibraryCore.swift; sourceTree = "<group>"; };
+		B2000420 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		B2000430 /* RuntimeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeSupport.swift; sourceTree = "<group>"; };
+		B2000440 /* ARM64Runtime */ = {isa = PBXFileReference; lastKnownFileType = folder; path = ARM64Runtime; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -175,6 +185,11 @@
 				B2000303 /* Assets.xcassets */,
 				B2000304 /* ControllerSupport */,
 				B2000305 /* RuntimeInstallers */,
+				B2000400 /* CrashRecovery.swift */,
+				B2000410 /* GameLibraryCore.swift */,
+				B2000420 /* LibraryView.swift */,
+				B2000430 /* RuntimeSupport.swift */,
+				B2000440 /* ARM64Runtime */,
 				A2000003 /* LogStore.swift */,
 				A2000200 /* LogPattern.swift */,
 				A2000201 /* LogTail.swift */,
@@ -315,6 +330,7 @@
 				B1000303 /* Assets.xcassets in Resources */,
 				B1000304 /* ControllerSupport in Resources */,
 				B1000305 /* RuntimeInstallers in Resources */,
+				B1000440 /* ARM64Runtime in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -329,6 +345,10 @@
 				A1000002 /* ContentView.swift in Sources */,
 				B1000301 /* EmulatorSettings.swift in Sources */,
 				B1000302 /* ControllerBridge.c in Sources */,
+				B1000400 /* CrashRecovery.swift in Sources */,
+				B1000410 /* GameLibraryCore.swift in Sources */,
+				B1000420 /* LibraryView.swift in Sources */,
+				B1000430 /* RuntimeSupport.swift in Sources */,
 				A1000003 /* LogStore.swift in Sources */,
 				A1000200 /* LogPattern.swift in Sources */,
 				A1000201 /* LogTail.swift in Sources */,

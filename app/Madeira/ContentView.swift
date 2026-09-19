@@ -813,6 +813,16 @@ final class InputSettings: ObservableObject {
     /// the defaults back over a file it had only half-read.
     private var loading = false
 
+    func applySession(_ profile: GameProfile) {
+        loading = true
+        relative = profile.relativeMouse
+        sensAbs = min(8, max(0.1, profile.pointerSensitivity))
+        sensRel = min(8, max(0.1, profile.mouseLookSensitivity))
+        diagnostics = profile.diagnostics
+    }
+
+    func finishSession() { loading = false }
+
     private static var url: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("madeira-input.json")
@@ -854,6 +864,8 @@ struct ContentView: View {
     @ObservedObject private var input = InputSettings.shared
     @State private var pointerPanel = false
     @State private var settingsPresented = false
+    @State private var libraryPresented = true
+    @State private var launchPending = false
     @ObservedObject private var settings = EmulatorSettings.shared
     @Namespace private var pointerNS
     /// .compact = iPhone landscape: game surface expands, arrow keys appear.
@@ -891,13 +903,25 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarHidden(vSizeClass == .compact)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { libraryPresented = true } label: { Image(systemName: "square.grid.2x2") }
+                        .accessibilityLabel("Library")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { settingsPresented = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Settings")
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: Notification.Name("somethingpc.openSettings"))) { _ in
-                settingsPresented = true
+                libraryPresented = true
+            }
+            .fullScreenCover(isPresented: $libraryPresented, onDismiss: {
+                setSettingsVisible(false)
+                if launchPending { launchPending = false; runWineFullSequence() }
+            }) {
+                LibraryView(launch: launchLibraryGame,
+                    resume: { libraryPresented = false }, diagnostics: { libraryPresented = false })
+                    .onAppear { setSettingsVisible(true) }
             }
             .fullScreenCover(isPresented: $settingsPresented, onDismiss: { setSettingsVisible(false) }) {
                 EmulatorSettingsView().onAppear { setSettingsVisible(true) }
@@ -919,6 +943,70 @@ struct ContentView: View {
         winios_set_presentation_hidden(visible ? 1 : 0)
         TouchControlsHost.setSuspended(visible)
         JoystickPadState.shared.hidden = visible || pointerPanel
+    }
+
+    private func launchLibraryGame(_ game: LibraryGame, _ profile: GameProfile) {
+        let library = GameLibrary.shared
+        guard !library.busy else { return }
+        guard !library.sessionStarted, wineserver_is_running() == 0, wine_process_is_running() == 0 else {
+            library.error = "A Wine session is already running. Use Resume session, or close and reopen the app before starting another game or changing its runtime."
+            return
+        }
+        library.busy = true
+        let prepare = {
+            settings.beginSession(profile)
+            settings.applyResolution()
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    unsetenv("MADEIRA_ARGS")
+                    unsetenv("MADEIRA_DESKTOP")
+                    if let executable = game.executable {
+                        let machine = try GameFiles.machine(executable)
+                        guard [UInt16(0x8664), 0xaa64, 0xa641, 0xa64e].contains(machine) else {
+                            throw LibraryFailure.invalid("This build supports 64-bit Windows games, not 32-bit x86 executables.")
+                        }
+                        setenv("MADEIRA_USE_ARM64EC", machine == 0xaa64 || machine == 0xa64e ? "0" : "1", 1)
+                        setenv("MADEIRA_EXE", try GameFiles.windowsPath(executable, drive: GameLibrary.drive), 1)
+                        guard profile.arguments.utf8.count < 1000 else { throw LibraryFailure.invalid("Launch arguments are too long.") }
+                        setenv("MADEIRA_ARGS", profile.arguments, 1)
+                    } else {
+                        setenv("MADEIRA_USE_ARM64EC", "0", 1)
+                        setenv("MADEIRA_EXE", "explorer.exe", 1)
+                        setenv("MADEIRA_DESKTOP", "1", 1)
+                        let width = String(cString: getenv("MADEIRA_SCREEN_W")!)
+                        let height = String(cString: getenv("MADEIRA_SCREEN_H")!)
+                        setenv("MADEIRA_ARGS", "/desktop=shell,\(width)x\(height) C:\\windows\\system32\\services.exe", 1)
+                    }
+                    try RuntimeSupport.prepare(enabled: profile.visualCppARM64)
+                    DispatchQueue.main.async {
+                        CrashRecovery.shared.launching(game.title)
+                        LogStore.shared.log("Launching \(game.title); bundled ARM64 VC++: \(profile.visualCppARM64)")
+                        library.busy = false
+                        library.sessionStarted = true
+                        launchPending = true
+                        libraryPresented = false
+                    }
+                } catch {
+                    DispatchQueue.main.async {
+                        settings.endSession()
+                        library.busy = false
+                        library.error = error.localizedDescription
+                    }
+                }
+            }
+        }
+        if jit_check_debugged() { prepare() }
+        else {
+            StikJITHelper.enableJIT { success in
+                DispatchQueue.main.async {
+                    if success { prepare() }
+                    else {
+                        library.busy = false
+                        library.error = "JIT could not be enabled. Use your existing StikDebug/JIT setup, then try again. Diagnostics & JIT is available from the Library menu."
+                    }
+                }
+            }
+        }
     }
 
     private var portraitBody: some View {

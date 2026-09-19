@@ -344,6 +344,32 @@ void madeira_seed_prefix_if_needed(const char *prefix_path) {
     }
 }
 
+int spc_install_arm64_runtime(const char *prefix_path) {
+    @autoreleasepool {
+        NSString *source = [NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"ARM64Runtime"];
+        NSString *prefix = [NSString stringWithUTF8String:prefix_path];
+        NSFileManager *manager = NSFileManager.defaultManager;
+        const char *architecture = getenv("MADEIRA_USE_ARM64EC");
+        BOOL ec = architecture && architecture[0] == '1';
+        NSArray *farms = ec ? @[@"sysaa64"] : @[@"sysaa64", @"system32"];
+        NSArray *files = [manager contentsOfDirectoryAtPath:source error:nil];
+        if (!files.count) return -1;
+        for (NSString *farm in farms) {
+            NSString *directory = [prefix stringByAppendingPathComponent:
+                [NSString stringWithFormat:@"drive_c/windows/%@", farm]];
+            if (![manager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil]) return -1;
+            for (NSString *name in files) {
+                if (![name.pathExtension isEqualToString:@"dll"]) continue;
+                NSString *target = [directory stringByAppendingPathComponent:name];
+                [manager removeItemAtPath:target error:nil];
+                if (![manager createSymbolicLinkAtPath:target withDestinationPath:
+                    [source stringByAppendingPathComponent:name] error:nil]) return -1;
+            }
+        }
+        return 0;
+    }
+}
+
 static void *wine_process_thread(void *arg) {
     @autoreleasepool {
         /* Perf: the guest main thread runs ON this pthread. Promote to
@@ -616,9 +642,9 @@ static void *wine_process_thread(void *arg) {
         // Otherwise: detect "x64" in the exe name (cube-x64, fib-x64, etc.)
         // OR a Win32 full path (real game launches typically need ARM64EC).
         const char *force_ec = getenv("MADEIRA_USE_ARM64EC");
-        BOOL use_arm64ec = (force_ec && *force_ec == '1') ||
-                           (strstr(madeira_exe, "x64") != NULL) ||
-                           (strchr(madeira_exe, '\\') != NULL);
+        BOOL use_arm64ec = force_ec ? (*force_ec == '1') :
+                           ((strstr(madeira_exe, "x64") != NULL) ||
+                            (strchr(madeira_exe, '\\') != NULL));
         const char *bundle_subdir = use_arm64ec ? "arm64ec-windows" : "aarch64-windows";
         LOG("Target exe: %{public}s (bundle=%{public}s)", madeira_exe, bundle_subdir);
         dprintf(STDERR_FILENO, "[WineProc] Target exe: %s (bundle=%s)\n", madeira_exe, bundle_subdir);
@@ -629,6 +655,17 @@ static void *wine_process_thread(void *arg) {
             NSString *dllSource = [bundlePath stringByAppendingPathComponent:[NSString stringWithUTF8String:bundle_subdir]];
             NSString *prefix = [NSString stringWithUTF8String:g_prefix_path];
             NSString *sys32Dir = [prefix stringByAppendingPathComponent:@"drive_c/windows/system32"];
+            NSString *runtime = [bundlePath stringByAppendingPathComponent:@"ARM64Runtime"];
+            for (NSString *farm in @[@"system32", @"sysaa64"]) {
+                NSString *directory = [prefix stringByAppendingPathComponent:
+                    [NSString stringWithFormat:@"drive_c/windows/%@", farm]];
+                for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:runtime error:nil]) {
+                    NSString *target = [directory stringByAppendingPathComponent:name];
+                    NSString *link = [NSFileManager.defaultManager destinationOfSymbolicLinkAtPath:target error:nil];
+                    if ([link containsString:@"/ARM64Runtime/"])
+                        [NSFileManager.defaultManager removeItemAtPath:target error:nil];
+                }
+            }
             NSFileManager *fm = [NSFileManager defaultManager];
 
             [fm createDirectoryAtPath:sys32Dir withIntermediateDirectories:YES attributes:nil error:nil];
@@ -856,6 +893,15 @@ static void *wine_process_thread(void *arg) {
                 [manager createSymbolicLinkAtPath:target withDestinationPath:
                     [runtimeSource stringByAppendingPathComponent:name] error:nil];
             }
+        }
+
+        const char *arm64_runtime = getenv("SOMETHINGPC_ARM64_VC");
+        if (arm64_runtime && arm64_runtime[0] == '1') {
+            if (spc_install_arm64_runtime(g_prefix_path) != 0) {
+                LOG("Could not activate ARM64 runtime; refusing to launch");
+                return NULL;
+            }
+            dprintf(STDERR_FILENO, "[SomethingPC] Bundled ARM64 VC++ runtime active; EC/x64 exception handlers preserved\n");
         }
 
         // Build the launch path for Wine's PE loader.

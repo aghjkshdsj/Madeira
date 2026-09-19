@@ -1,0 +1,91 @@
+import Foundation
+
+func expect(_ condition: Bool, _ message: String) {
+    guard condition else { fatalError(message) }
+}
+
+func rejects(_ message: String, _ action: () throws -> Void) {
+    do { try action(); fatalError(message) } catch { }
+}
+
+let manager = FileManager.default
+let root = manager.temporaryDirectory.appendingPathComponent("somethingpc-tests-" + UUID().uuidString, isDirectory: true)
+try manager.createDirectory(at: root, withIntermediateDirectories: true)
+defer { try? manager.removeItem(at: root) }
+let drive = root.appendingPathComponent("drive_c", isDirectory: true)
+let games = drive.appendingPathComponent("Games", isDirectory: true)
+let game = games.appendingPathComponent("Example Game", isDirectory: true)
+try manager.createDirectory(at: game, withIntermediateDirectories: true)
+
+func executable(_ machine: UInt16, at url: URL) throws {
+    var bytes = Data(repeating: 0, count: 128)
+    bytes[0] = 0x4d; bytes[1] = 0x5a; bytes[60] = 64
+    bytes[64] = 0x50; bytes[65] = 0x45
+    bytes[68] = UInt8(machine & 255); bytes[69] = UInt8(machine >> 8)
+    try bytes.write(to: url)
+}
+
+let exe = game.appendingPathComponent("Example.exe")
+try executable(0x8664, at: exe)
+expect(try GameFiles.machine(exe) == 0x8664, "x64 machine detection")
+let arm = root.appendingPathComponent("native.exe")
+try executable(0xaa64, at: arm)
+expect(try GameFiles.machine(arm) == 0xaa64, "ARM64 machine detection")
+try executable(0xa64e, at: arm)
+expect(try GameFiles.machine(arm) == 0xa64e, "ARM64X machine detection")
+let bad = root.appendingPathComponent("bad.exe")
+try Data("not an exe".utf8).write(to: bad)
+rejects("invalid PE accepted") { _ = try GameFiles.machine(bad) }
+let hostile = root.appendingPathComponent("hostile.exe")
+var malformed = Data(repeating: 255, count: 64)
+malformed[0] = 0x4d; malformed[1] = 0x5a
+try malformed.write(to: hostile)
+rejects("unbounded PE offset accepted") { _ = try GameFiles.machine(hostile) }
+expect(try GameFiles.windowsPath(exe, drive: drive) == "C:\\Games\\Example Game\\Example.exe", "Windows path mapping")
+rejects("outside drive accepted") { _ = try GameFiles.windowsPath(arm, drive: drive) }
+expect(!GameFiles.isInside(root.appendingPathComponent("drive_c-other/Game.exe"), root: drive), "sibling prefix traversal")
+try manager.createSymbolicLink(at: game.appendingPathComponent("escaped.exe"), withDestinationURL: arm)
+expect(!GameFiles.isInside(game.appendingPathComponent("escaped.exe"), root: games), "symlink escape")
+try executable(0x8664, at: game.appendingPathComponent("unins000.exe"))
+try executable(0x8664, at: game.appendingPathComponent("CrashReportClient.exe"))
+try Data().write(to: game.appendingPathComponent("cover.png"))
+try Data("480\n".utf8).write(to: game.appendingPathComponent("steam_appid.txt"))
+try Data("{\"title\":\"Example Title\",\"publisher\":\"Example Studio\"}".utf8).write(to: game.appendingPathComponent("somethingpc-game.json"))
+let found = try GameFiles.discover(in: games)
+expect(found.count == 1, "discovery included helper executables or symlinks")
+expect(found[0].title == "Example Title" && found[0].publisher == "Example Studio", "local metadata")
+expect(found[0].cover?.lastPathComponent == "cover.png" && found[0].steamID == "480", "cover metadata")
+try Data("../../evil".utf8).write(to: game.appendingPathComponent("steam_appid.txt"))
+expect(try GameFiles.discover(in: games)[0].steamID == nil, "invalid Steam ID accepted")
+try GameFiles.copyImport(arm, to: games, folder: false)
+expect(try GameFiles.discover(in: games).count == 2, "EXE import discovery")
+rejects("invalid imported EXE accepted") { try GameFiles.copyImport(bad, to: games, folder: false) }
+rejects("recursive folder import accepted") { try GameFiles.copyImport(drive, to: games, folder: true) }
+rejects("symlink-containing import accepted") { try GameFiles.copyImport(game, to: games, folder: true) }
+let source = root.appendingPathComponent("Full Game")
+try manager.createDirectory(at: source, withIntermediateDirectories: true)
+try executable(0x8664, at: source.appendingPathComponent("Play.exe"))
+try Data("game assets".utf8).write(to: source.appendingPathComponent("data.bin"))
+try GameFiles.copyImport(source, to: games, folder: true)
+let imported = try GameFiles.discover(in: games).first { $0.title == "Play" }!
+expect(manager.fileExists(atPath: imported.executable!.deletingLastPathComponent().appendingPathComponent("data.bin").path), "folder assets lost")
+
+let existing = "[\(RuntimeRegistry.key)] 123\n\"Installed\"=dword:00000000\n\n"
+let replacement = "[\(RuntimeRegistry.key)]\n\"Installed\"=dword:00000001\n\n"
+let before = "WINE REGISTRY Version 2\n\n[Other] 1\n\"Value\"=\"keep\"\n\n"
+let after = "[Another] 2\n\"Value\"=\"also keep\"\n"
+let original = before + existing + after
+expect(RuntimeRegistry.section(in: original) == existing, "registry section extraction")
+let activated = RuntimeRegistry.replacing(in: original, with: replacement)
+expect(activated == before + replacement + after, "unrelated registry keys changed")
+expect(RuntimeRegistry.replacing(in: activated, with: existing) == original, "registry rollback")
+let last = before + String(existing.dropLast(2))
+expect(RuntimeRegistry.section(in: last) == String(existing.dropLast(2)), "EOF section without newline")
+expect(!RuntimeRegistry.replacing(in: last, with: "").contains(RuntimeRegistry.key), "EOF removal")
+let absent = before + after
+expect(RuntimeRegistry.section(in: absent).isEmpty, "absent key extraction")
+expect(!RuntimeRegistry.replacing(in: RuntimeRegistry.replacing(in: absent, with: replacement), with: "").contains(RuntimeRegistry.key), "new key rollback")
+var profile = GameProfile()
+profile.customSettings = true; profile.visualCppARM64 = true; profile.resolution = "1280x720"
+expect(try JSONDecoder().decode(GameProfile.self, from: JSONEncoder().encode(profile)) == profile, "profile round trip")
+print("All Something PC library/runtime registry tests passed")

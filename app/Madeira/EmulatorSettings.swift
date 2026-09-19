@@ -19,6 +19,7 @@ final class EmulatorSettings: ObservableObject {
     @Published var deadZone = 0.15 { didSet { save() } }
     @Published var mouseSpeed = 8.0 { didSet { save() } }
     private var loading = true
+    private var sessionOriginal: GameProfile?
     private let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("somethingpc-settings.json")
 
@@ -52,6 +53,45 @@ final class EmulatorSettings: ObservableObject {
     func applyResolution() {
         setenv("MADEIRA_SCREEN_W", String(width), 1)
         setenv("MADEIRA_SCREEN_H", String(height), 1)
+    }
+
+    func beginSession(_ profile: GameProfile) {
+        endSession()
+        var original = GameProfile()
+        original.customSettings = true
+        original.resolution = resolution
+        original.showFPS = showFPS
+        original.presentationMode = presentationMode
+        original.keepAwake = keepAwake
+        original.controllerMode = controllerMode
+        original.deadZone = deadZone
+        original.mouseSpeed = mouseSpeed
+        original.relativeMouse = InputSettings.shared.relative
+        original.pointerSensitivity = InputSettings.shared.sensAbs
+        original.mouseLookSensitivity = InputSettings.shared.sensRel
+        original.diagnostics = InputSettings.shared.diagnostics
+        sessionOriginal = original
+        loading = true
+        applySessionValues(profile.customSettings ? profile : original)
+    }
+
+    func endSession() {
+        guard let original = sessionOriginal else { return }
+        applySessionValues(original)
+        sessionOriginal = nil
+        loading = false
+        InputSettings.shared.finishSession()
+    }
+
+    private func applySessionValues(_ profile: GameProfile) {
+        resolution = Self.resolutions.contains(profile.resolution) ? profile.resolution : "960x540"
+        showFPS = profile.showFPS
+        presentationMode = min(2, max(0, profile.presentationMode))
+        keepAwake = profile.keepAwake
+        controllerMode = profile.controllerMode == "keyboard" ? "keyboard" : "xinput"
+        deadZone = min(0.5, max(0, profile.deadZone))
+        mouseSpeed = min(20, max(1, profile.mouseSpeed))
+        InputSettings.shared.applySession(profile)
     }
 
     private func save() {
@@ -233,6 +273,7 @@ final class GameControllerManager: NSObject, ObservableObject {
 }
 
 struct EmulatorSettingsView: View {
+    var showDone = true
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var settings = EmulatorSettings.shared
     @ObservedObject private var controllers = GameControllerManager.shared
@@ -242,6 +283,10 @@ struct EmulatorSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if GameLibrary.shared.sessionStarted {
+                    Text("A session is running. These controls change temporary session values only. Long-press a library card to save per-game settings for your next launch.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Graphics") {
                     Picker("Desktop resolution", selection: $settings.resolution) {
                         ForEach(EmulatorSettings.resolutions, id: \.self) { Text($0).tag($0) }
@@ -297,8 +342,8 @@ struct EmulatorSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Windows runtime help") {
-                    Text("Use the runtime required by the Windows game, not by the iPhone CPU. Microsoft installers are available in C:\\SomethingPC\\Runtimes inside the Wine desktop. Run the appropriate installer there, then restart the app.")
-                    Text("ARM64 prerequisites in Mecha Chameleon and Scarlet Skips still need device verification. Existing working Wine C++ exception-handling libraries are preserved; this update does not replace them blindly.")
+                    Text("Touch and hold a game in Library, open Game Settings, then enable bundled ARM64 Visual C++. Restart the app before launching that game. You do not need to run the ARM64 installer.")
+                    Text("The required Windows runtime depends on the game, not the iPhone CPU. This compatibility option does not guarantee that every game will run; the working Wine/x64 exception handlers are preserved.")
                         .font(.caption).foregroundStyle(.secondary)
                     Link("Microsoft runtime documentation", destination: URL(string: "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist")!)
                 }
@@ -311,7 +356,7 @@ struct EmulatorSettingsView: View {
                 }
             }
             .navigationTitle("Settings")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { if showDone { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } } }
             .sheet(isPresented: $testing) { ControllerTestView() }
         }
     }
