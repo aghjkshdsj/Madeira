@@ -61,7 +61,13 @@ jobs:
             $bytes = [IO.File]::ReadAllBytes($source)
             $offset = [BitConverter]::ToInt32($bytes,60)
             $machine = [BitConverter]::ToUInt16($bytes,$offset+4)
-            if ($machine -notin @(0xaa64,0xa64e)) { throw "Not ARM64/ARM64X: $name machine=$machine" }
+            if ($machine -notin @(0xaa64,0xa64e)) {
+              if ($name -in @("vcomp140.dll","vccorlib140.dll","vcruntime140_1.dll","vcruntime140_threads.dll","vcamp140.dll")) {
+                Write-Output "Skipping non-ARM64 optional DLL: $name machine=$machine"
+                continue
+              }
+              throw "Not ARM64/ARM64X: $name machine=$machine"
+            }
             Copy-Item -LiteralPath $source -Destination (Join-Path $folder $name)
             $hashes[$name] = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
           }

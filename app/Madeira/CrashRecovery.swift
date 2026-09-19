@@ -38,6 +38,7 @@ final class CrashRecovery: ObservableObject {
             let existing = try manager.contentsOfDirectory(at: reports, includingPropertiesForKeys: [.creationDateKey])
                 .filter { $0.lastPathComponent.hasPrefix("Unexpected-close-") && $0.pathExtension == "txt" }
                 .sorted { ((try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) > ((try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) }
+            if report == nil { report = existing.first }
             for old in existing.dropFirst(5) where old != report { try? manager.removeItem(at: old) }
         } catch {
             NSLog("Could not preserve previous session logs: %@", error.localizedDescription)
